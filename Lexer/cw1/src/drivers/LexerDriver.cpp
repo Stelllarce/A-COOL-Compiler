@@ -61,9 +61,30 @@ string cool_token_to_string(Token *token) {
         case CoolLexer::NEW: return "NEW";
         case CoolLexer::ISVOID: return "ISVOID";
         case CoolLexer::NOT: return "NOT";
+        case CoolLexer::ERROR: return "ERROR";
+        case CoolLexer::STR_CONST: return "STR_CONST";
         // Добавете тук останалите валидни жетони (включително и ERROR).
 
         default : return "<Invalid Token>: " + token->toString();
+    }
+}
+
+string cool_error_code_to_string(CoolLexer::ErrorCode code) {
+    switch (code) {
+        case CoolLexer::ErrorCode::UNMATCHED_COMMENT:
+            return "Unmatched";
+        case CoolLexer::ErrorCode::EOF_IN_STRING:
+            return "EOF in string constant";
+        case CoolLexer::ErrorCode::EOF_IN_COMMENT:
+            return "EOF in comment";
+        case CoolLexer::ErrorCode::STRING_TOO_LONG:
+            return "String constant too long";
+        case CoolLexer::ErrorCode::INVALID_ESCAPE_SEQUENCE:
+            return "Invalid escape sequence in string constant";
+        case CoolLexer::ErrorCode::INVALID_SYMBOL:
+            return "Invalid symbol";
+        default:
+            return "Unknown lexer error";
     }
 }
 
@@ -87,9 +108,24 @@ void dump_cool_token(CoolLexer *lexer, ostream &out, Token *token) {
     case CoolLexer::OBJECTID:
         out << " " << token->getText();
         break;
+    case CoolLexer::INT_CONST:
+        out << " " << token->getText();
+        break;
+    case CoolLexer::ERROR: {
+        CoolLexer::ErrorCode error_code = lexer->get_error_code(token_start_char_index);
+        if (token->getText().length() == 1 && token->getText()[0] == '\0') {
+            out << ": " << cool_error_code_to_string(error_code) << " \"<0x00>\"";
+        } else {
+            out << ": " << cool_error_code_to_string(error_code) << " \"" << token->getText() << "\"";
+        }
+        break;
+    }
+    case CoolLexer::STR_CONST:
+        out << " " << "\"" << lexer->get_string_value(token_start_char_index) << "\"";
+        break;
     // Добавете тук още случаи, за жетони, към които е прикачен специален смисъл.
     }
-
+    
     out << endl;
 }
 

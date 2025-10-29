@@ -19,6 +19,7 @@ options { language = Cpp; }
 
     void add_char_to_string_buffer(char c) {
         if (string_buffer.size() >= MAX_STR_CONST) {
+            register_error(ErrorCode::STRING_TOO_LONG);
         } else {
             string_buffer.push_back(convert_escape_sequence(c));
         }
@@ -37,6 +38,10 @@ options { language = Cpp; }
         }
     }
 
+    std::string get_string_value(int token_start_char_index) {
+        return std::string(string_buffer.begin(), string_buffer.end());
+    }
+
     // ----------------------- booleans -------------------------
 
     // A map from token ids to boolean values
@@ -52,6 +57,24 @@ options { language = Cpp; }
 
     // Add your own custom code to be copied to CoolLexer.h here.
 
+    enum class ErrorCode {
+        UNMATCHED_COMMENT,
+        EOF_IN_STRING,
+        EOF_IN_COMMENT,
+        STRING_TOO_LONG,
+        INVALID_ESCAPE_SEQUENCE,
+        INVALID_SYMBOL
+    };
+
+    std::map<int, ErrorCode> err_codes;
+
+    void register_error(ErrorCode code) {
+        err_codes[tokenStartCharIndex] = code;
+    }
+
+    ErrorCode get_error_code(int token_start_char_index) {
+        return err_codes.at(token_start_char_index);
+    }
 
 }
 
@@ -115,25 +138,67 @@ TILDE  : '~';
 
 // --------------- коментари -------------------
 
-LINE_COMMENT : '--' .*? '\n' -> skip;
-ML_COMMENT_START : '(*' ->pushMode(COMMENT_MODE), skip;
+LINE_COMMENT : '--' ~[\r\n]* -> skip;
+ML_COMMENT_START : '(*' ->pushMode(ML_COMMENT_MODE), skip;
+ML_COMMENT_UNMATCHED_END : '*)' { 
+    register_error(ErrorCode::UNMATCHED_COMMENT);
+    setType(ERROR); 
+};
 
 // --------------- интервали -------------------
 
 WS : [ \t\r\n\f]+ -> skip;
 
 // --------------- текстови низове -------------------
+STR_CONST : ;
+STR_START : '"' { clear_string_buffer(); } -> pushMode(STR_MODE), skip;
 
+NULL_CHAR: '\u0000' {
+    register_error(ErrorCode::INVALID_SYMBOL);
+    setType(ERROR);
+};
 
-mode COMMENT_MODE;
-NESTED_ML_COMMENT_START : '(*' -> pushMode(COMMENT_MODE), skip;
+ERROR : . { register_error(ErrorCode::INVALID_SYMBOL); };
+
+// --------------- допълнителна обработка на коментари -------------------
+mode ML_COMMENT_MODE;
+NESTED_ML_COMMENT_START : '(*' -> pushMode(ML_COMMENT_MODE), skip;
 ML_COMMENT_END : '*)' -> popMode, skip;
-
-// ML_COMMENT_ERROR : EOF -> { semantic_value = "EOF in comment"; }, type(ERROR), popMode;
-
 ML_COMMENT_ANY : . -> skip;
+ML_COMMENT_EOF : . EOF { 
+    register_error(ErrorCode::EOF_IN_COMMENT);
+    setType(ERROR); 
+};
 
 
-// --------------- грешки -------------------
+mode STR_MODE;
 
-    //   | BAD_ML_COMMENT { notifyListeners("EOF in comment"); };
+STR_END : '"' { setType(STR_CONST); } -> popMode;
+
+STR_UNESCAPED_NEWLINE : '\n' {
+    register_error(ErrorCode::INVALID_ESCAPE_SEQUENCE);
+    setType(ERROR);
+} -> popMode;
+
+STR_ESCAPED_NEWLINE : '\\\n' {
+    add_char_to_string_buffer('\n');
+} -> skip;
+
+STR_NULL_CHAR : '\u0000' {
+    register_error(ErrorCode::INVALID_ESCAPE_SEQUENCE);
+    setType(ERROR);
+} -> popMode;
+
+STR_EOF : EOF {
+    register_error(ErrorCode::EOF_IN_STRING);
+    setType(ERROR);
+} -> popMode;
+
+STR_ESCAPED_CHAR : '\\' . { 
+    add_char_to_string_buffer(getText()[1]); 
+} -> skip;
+
+STR_SINGLE_CHAR : ~["\\\n] { 
+    add_char_to_string_buffer(getText()[0]); 
+} -> skip;
+
