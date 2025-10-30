@@ -76,13 +76,17 @@ string cool_error_code_to_string(CoolLexer::ErrorCode code) {
         case CoolLexer::ErrorCode::EOF_IN_STRING:
             return "Unterminated string at EOF";
         case CoolLexer::ErrorCode::EOF_IN_COMMENT:
-            return "EOF in comment";
+            return "Unmatched (*";
         case CoolLexer::ErrorCode::STRING_TOO_LONG:
             return "String constant too long";
         case CoolLexer::ErrorCode::INVALID_ESCAPE_SEQUENCE:
-            return "Invalid escape sequence in string constant";
+            return "String contains unescaped new line";
         case CoolLexer::ErrorCode::INVALID_SYMBOL:
             return "Invalid symbol";
+        case CoolLexer::ErrorCode::ESCAPED_NULL:
+            return "String contains escaped null character";
+        case CoolLexer::ErrorCode::NULL_INSIDE_STRING:
+            return "String contains null character";
         default:
             return "Unknown lexer error";
     }
@@ -113,13 +117,21 @@ void dump_cool_token(CoolLexer *lexer, ostream &out, Token *token) {
         break;
     case CoolLexer::ERROR: {
         CoolLexer::ErrorCode error_code = lexer->get_error_code(token_start_char_index);
-        if (token->getText().length() == 1 && token->getText()[0] == '\0') {
-            out << ": " << cool_error_code_to_string(error_code) << " \"<0x00>\"";
-        } else if (error_code == CoolLexer::ErrorCode::INVALID_SYMBOL) {
-            out << ": " << cool_error_code_to_string(error_code) << " \"" << token->getText() << "\"";
+        if (error_code == CoolLexer::ErrorCode::INVALID_SYMBOL_NON_PRINTABLE) {
+            out << ": " << cool_error_code_to_string(CoolLexer::ErrorCode::INVALID_SYMBOL) << " \"" << lexer->convert_non_printable_to_hex(token->getText()[0]) << "\"";
+        }
+        else if (error_code == CoolLexer::ErrorCode::INVALID_SYMBOL) {
+            if (token->getText()[0] == '\\')
+                out << ": " << cool_error_code_to_string(error_code) << " \"\\" << token->getText() << "\"";
+            else
+                out << ": " << cool_error_code_to_string(error_code) << " \"" << token->getText() << "\"";
         }
         else if (error_code == CoolLexer::ErrorCode::EOF_IN_COMMENT ||
-                 error_code == CoolLexer::ErrorCode::EOF_IN_STRING) {
+                 error_code == CoolLexer::ErrorCode::EOF_IN_STRING ||
+                 error_code == CoolLexer::ErrorCode::INVALID_ESCAPE_SEQUENCE ||
+                 error_code == CoolLexer::ErrorCode::NULL_INSIDE_STRING ||
+                 error_code == CoolLexer::ErrorCode::ESCAPED_NULL ||
+                 error_code == CoolLexer::ErrorCode::STRING_TOO_LONG) {
             out << ": " << cool_error_code_to_string(error_code);
         }
         else {
@@ -130,7 +142,6 @@ void dump_cool_token(CoolLexer *lexer, ostream &out, Token *token) {
     case CoolLexer::STR_CONST:
         out << " " << "\"" << lexer->get_string_value(token_start_char_index) << "\"";
         break;
-    // Добавете тук още случаи, за жетони, към които е прикачен специален смисъл.
     }
     
     out << endl;
