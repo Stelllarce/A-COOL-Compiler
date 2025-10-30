@@ -74,7 +74,7 @@ string cool_error_code_to_string(CoolLexer::ErrorCode code) {
         case CoolLexer::ErrorCode::UNMATCHED_COMMENT:
             return "Unmatched";
         case CoolLexer::ErrorCode::EOF_IN_STRING:
-            return "EOF in string constant";
+            return "Unterminated string at EOF";
         case CoolLexer::ErrorCode::EOF_IN_COMMENT:
             return "EOF in comment";
         case CoolLexer::ErrorCode::STRING_TOO_LONG:
@@ -115,8 +115,15 @@ void dump_cool_token(CoolLexer *lexer, ostream &out, Token *token) {
         CoolLexer::ErrorCode error_code = lexer->get_error_code(token_start_char_index);
         if (token->getText().length() == 1 && token->getText()[0] == '\0') {
             out << ": " << cool_error_code_to_string(error_code) << " \"<0x00>\"";
-        } else {
+        } else if (error_code == CoolLexer::ErrorCode::INVALID_SYMBOL) {
             out << ": " << cool_error_code_to_string(error_code) << " \"" << token->getText() << "\"";
+        }
+        else if (error_code == CoolLexer::ErrorCode::EOF_IN_COMMENT ||
+                 error_code == CoolLexer::ErrorCode::EOF_IN_STRING) {
+            out << ": " << cool_error_code_to_string(error_code);
+        }
+        else {
+            out << ": " << cool_error_code_to_string(error_code) << " " << token->getText();
         }
         break;
     }

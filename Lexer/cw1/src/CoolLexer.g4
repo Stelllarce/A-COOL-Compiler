@@ -2,10 +2,6 @@ lexer grammar CoolLexer;
 
 options { language = Cpp; }
 
-// Тази част позволява дефинирането на допълнителен код, който да се запише в
-// генерирания CoolLexer.h.
-//
-// Коментарите вътре са на английски, понеже ANTLR4 иначе ги омазва.
 @lexer::members {
     // Maximum length of a constant string literal (CSL) excluding the implicit
     // null character that marks the end of the string.
@@ -21,30 +17,43 @@ options { language = Cpp; }
         if (string_buffer.size() >= MAX_STR_CONST) {
             register_error(ErrorCode::STRING_TOO_LONG);
         } else {
-            string_buffer.push_back(convert_escape_sequence(c));
+            string_buffer.push_back(c);
         }
     }
 
-    char convert_escape_sequence(char esc_char) {
-        switch (esc_char) {
-            case 'n': return '\n';
-            case 't': return '\t';
-            case 'b': return '\b';
-            case 'f': return '\f';
-            case 'r': return '\r';
-            case '\\': return '\\';
-            case '"': return '"';
-            default: return esc_char;
+    void add_escaped_char_to_string_buffer(char c) {
+        if (string_buffer.size() >= MAX_STR_CONST) {
+            register_error(ErrorCode::STRING_TOO_LONG);
+            return;
         }
+        switch (c) {
+            case 'n':
+            case 't':
+            case 'b':
+            case 'f':
+            case 'r':
+            case '\\':
+            case '"': {
+                string_buffer.push_back('\\');
+                string_buffer.push_back(c);
+                break;
+            }
+            default:
+                string_buffer.push_back(c);
+                break;
+        }
+    }
+
+    std::map<int, std::string> string_values;
+
+    void assoc_string_with_token() {
+        string_values[tokenStartCharIndex] = std::string(string_buffer.begin(), string_buffer.end());
     }
 
     std::string get_string_value(int token_start_char_index) {
-        return std::string(string_buffer.begin(), string_buffer.end());
+        return string_values.at(token_start_char_index);
     }
 
-    // ----------------------- booleans -------------------------
-
-    // A map from token ids to boolean values
     std::map<int, bool> bool_values;
 
     void assoc_bool_with_token(bool value) {
@@ -55,7 +64,6 @@ options { language = Cpp; }
         return bool_values.at(token_start_char_index);
     }
 
-    // Add your own custom code to be copied to CoolLexer.h here.
 
     enum class ErrorCode {
         UNMATCHED_COMMENT,
@@ -79,7 +87,7 @@ options { language = Cpp; }
 }
 
 
-// --------------- ключови думи -------------------
+// --------------- keywords -------------------
 
 CLASS : [cC] [lL] [aA] [sS] [sS];
 ELSE  : [eE] [lL] [sS] [eE];
@@ -99,23 +107,20 @@ NEW   : [nN] [eE] [wW];
 ISVOID : [iI] [sS] [vV] [oO] [iI] [dD];
 NOT   : [nN] [oO] [tT];
 
-// --------------- булеви константи -------------------
+// --------------- boolean constants -------------------
 
 BOOL_CONST : 't' [rR] [uU] [eE]  { assoc_bool_with_token(true); }
            | 'f' [aA] [lL] [sS] [eE] { assoc_bool_with_token(false); };
 
-// --------------- числови константи -------------------
+// --------------- integer constants -------------------
 
 INT_CONST : '0' | [1-9] [0-9]*;
 
-// --------------- идентификатори -------------------
-
+// --------------- identifiers -------------------
 TYPEID : [A-Z] [a-zA-Z0-9_]*;
 OBJECTID : [a-z] [a-zA-Z0-9_]*;
 
-// --------------- прости жетони -------------------
-
-// Добавете тук останалите жетони, които представляват просто текст.
+// --------------- simple tokens -------------------
 SEMI   : ';';
 DARROW : '=>';
 COLON : ':';
@@ -136,20 +141,20 @@ DOT    : '.';
 AT     : '@';
 TILDE  : '~';
 
-// --------------- коментари -------------------
+// --------------- comments -------------------
 
 LINE_COMMENT : '--' ~[\r\n]* -> skip;
-ML_COMMENT_START : '(*' ->pushMode(ML_COMMENT_MODE), skip;
+ML_COMMENT_START : '(*' -> pushMode(ML_COMMENT_MODE), skip;
 ML_COMMENT_UNMATCHED_END : '*)' { 
     register_error(ErrorCode::UNMATCHED_COMMENT);
     setType(ERROR); 
 };
 
-// --------------- интервали -------------------
+// --------------- whitespaces -------------------
 
 WS : [ \t\r\n\f]+ -> skip;
 
-// --------------- текстови низове -------------------
+// --------------- strings -------------------
 STR_CONST : ;
 STR_START : '"' { clear_string_buffer(); } -> pushMode(STR_MODE), skip;
 
@@ -158,9 +163,11 @@ NULL_CHAR: '\u0000' {
     setType(ERROR);
 };
 
+// --------------- all errors -------------------
 ERROR : . { register_error(ErrorCode::INVALID_SYMBOL); };
 
-// --------------- допълнителна обработка на коментари -------------------
+
+// --------------- modes -------------------
 mode ML_COMMENT_MODE;
 NESTED_ML_COMMENT_START : '(*' -> pushMode(ML_COMMENT_MODE), skip;
 ML_COMMENT_END : '*)' -> popMode, skip;
@@ -170,35 +177,21 @@ ML_COMMENT_EOF : . EOF {
     setType(ERROR); 
 };
 
-
 mode STR_MODE;
-
-STR_END : '"' { setType(STR_CONST); } -> popMode;
-
-STR_UNESCAPED_NEWLINE : '\n' {
-    register_error(ErrorCode::INVALID_ESCAPE_SEQUENCE);
-    setType(ERROR);
+STR_END : '"' { 
+    setType(STR_CONST);
+    assoc_string_with_token(); 
 } -> popMode;
-
-STR_ESCAPED_NEWLINE : '\\\n' {
-    add_char_to_string_buffer('\n');
-} -> skip;
-
-STR_NULL_CHAR : '\u0000' {
-    register_error(ErrorCode::INVALID_ESCAPE_SEQUENCE);
-    setType(ERROR);
-} -> popMode;
-
-STR_EOF : EOF {
+TEXT : ~["\\] { add_char_to_string_buffer(getText()[0]); } -> skip;
+STR_ESCAPED_CHAR : '\\' . { add_escaped_char_to_string_buffer(getText()[1]); } -> skip;
+STR_UNTERMINATED_ESCAPED_CHAR : '\\' EOF { 
     register_error(ErrorCode::EOF_IN_STRING);
-    setType(ERROR);
-} -> popMode;
+    setType(ERROR); 
+};
+STR_EOF : . EOF { 
+    register_error(ErrorCode::EOF_IN_STRING);
+    setType(ERROR); 
+};
 
-STR_ESCAPED_CHAR : '\\' . { 
-    add_char_to_string_buffer(getText()[1]); 
-} -> skip;
 
-STR_SINGLE_CHAR : ~["\\\n] { 
-    add_char_to_string_buffer(getText()[0]); 
-} -> skip;
 
