@@ -11,7 +11,6 @@
 using namespace std;
 using namespace antlr4;
 
-/// Преобразува жетон в текст, който очаква системата за проверка на курсовата работа (част 1).
 string cool_token_to_string(Token *token) {
     auto token_type = token->getType();
 
@@ -19,7 +18,6 @@ string cool_token_to_string(Token *token) {
         case static_cast<size_t>(-1) : return "EOF";
 
         case CoolLexer::SEMI: return "';'";
-        // Добавете тук останалите жетони, които представляват само един символ.
         case CoolLexer::COLON: return "':'";
         case CoolLexer::COMMA: return "','";
         case CoolLexer::LPAREN: return "'('";
@@ -63,7 +61,6 @@ string cool_token_to_string(Token *token) {
         case CoolLexer::NOT: return "NOT";
         case CoolLexer::ERROR: return "ERROR";
         case CoolLexer::STR_CONST: return "STR_CONST";
-        // Добавете тук останалите валидни жетони (включително и ERROR).
 
         default : return "<Invalid Token>: " + token->toString();
     }
@@ -94,7 +91,6 @@ string cool_error_code_to_string(CoolLexer::ErrorCode code) {
 
 void dump_cool_token(CoolLexer *lexer, ostream &out, Token *token) {
     if (token->getType() == static_cast<size_t>(-1)) {
-        // Жетонът е EOF, така че не го принтирам.
         return;
     }
 

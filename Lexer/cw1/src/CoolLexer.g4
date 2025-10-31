@@ -13,6 +13,31 @@ options { language = Cpp; }
     // Stores the current CSL as it's being built.
     std::vector<char> string_buffer;
 
+    size_t get_string_buffer_size() {
+        size_t count = 0;
+        // Counts escape sequences as single characters
+        for (size_t i = 0; i < string_buffer.size(); ++i) {
+            if (string_buffer[i] == '\\' && (i + 1) < string_buffer.size()) {
+                switch (string_buffer[i + 1]) {
+                    case 'n':
+                    case 't':
+                    case 'b':
+                    case 'f':
+                    case 'r':
+                    case '\\':
+                    case '"': {
+                        ++i;
+                        break;
+                    }
+                    default:
+                        break;
+                }
+            }
+            ++count;
+        }
+        return count;
+    }
+
     void clear_string_buffer() {
         string_buffer.clear();
     }
@@ -35,61 +60,52 @@ options { language = Cpp; }
     }
 
     void add_char_to_string_buffer(char c) {
-        if (string_buffer.size() >= MAX_STR_CONST) {
-            register_error(ErrorCode::STRING_TOO_LONG);
-            setType(ERROR);
-        } else {
-            string_buffer.push_back(c);
-        }
+        string_buffer.push_back(c);
     }
 
     void add_escaped_char_to_string_buffer(char c) {
-        if (string_buffer.size() >= MAX_STR_CONST) {
-            register_error(ErrorCode::STRING_TOO_LONG);
-            setType(ERROR);
-        } else {
-            switch (c) {
-                case '\n': {
-                    string_buffer.push_back('\\');
-                    string_buffer.push_back('n');
-                    break;
-                }
-                case '\t': {
-                    string_buffer.push_back('\\');
-                    string_buffer.push_back('t');
-                    break;
-                }
-                case '\b': {
-                    string_buffer.push_back('\\');
-                    string_buffer.push_back('b');
-                    break;
-                }
-                case '\f': {
-                    string_buffer.push_back('\\');
-                    string_buffer.push_back('f');
-                    break;
-                }
-                case '\r': {    
-                    string_buffer.push_back('\\');
-                    string_buffer.push_back('r');
-                    break;
-                }
-                case 'n':
-                case 't':
-                case 'b':
-                case 'f':
-                case 'r':
-                case '\\':
-                case '"': {
-                    string_buffer.push_back('\\');
-                    string_buffer.push_back(c);
-                    break;
-                }
-                default:
-                    string_buffer.push_back(c);
-                    break;
+        switch (c) {
+            case '\n': {
+                string_buffer.push_back('\\');
+                string_buffer.push_back('n');
+                break;
             }
-        }   
+            case '\t': {
+                string_buffer.push_back('\\');
+                string_buffer.push_back('t');
+                break;
+            }
+            case '\b': {
+                string_buffer.push_back('\\');
+                string_buffer.push_back('b');
+                break;
+            }
+            case '\f': {
+                string_buffer.push_back('\\');
+                string_buffer.push_back('f');
+                break;
+            }
+            case '\r': {    
+                string_buffer.push_back('\\');
+                string_buffer.push_back('r');
+                break;
+            }
+            case 'n':
+            case 't':
+            case 'b':
+            case 'f':
+            case 'r':
+            case '\\':
+            case '"': {
+                string_buffer.push_back('\\');
+                string_buffer.push_back(c);
+                break;
+            }
+            default:
+                string_buffer.push_back(c);
+                break;
+        }
+
     }
 
     std::map<int, std::string> string_values;
@@ -235,21 +251,17 @@ ML_COMMENT_EOF : . EOF {
 
 mode STR_MODE;
 STR_END : '"' { 
-    if (string_buffer.size() > MAX_STR_CONST) {
-        clear_string_buffer();
-        register_error(ErrorCode::STRING_TOO_LONG);
-        setType(ERROR);
-    } else {
-        setType(STR_CONST);
-        assoc_string_with_token();
-    }
+    setType(STR_CONST);
+    assoc_string_with_token();
 } -> popMode;
+POTENTIAL_OVERFLOW: { get_string_buffer_size() >= MAX_STR_CONST }?  '\\'? ~["] -> skip, mode(STRING_OVERFLOW_MODE);
 NULL_CHAR : '\u0000' {
     clear_string_buffer();
     register_error(ErrorCode::NULL_INSIDE_STRING);
     setType(ERROR);
 } -> popMode, mode(EXIT_STR_MODE);
 ESCAPED_NULL_CHAR : '\\' '\u0000' {
+    clear_string_buffer();
     register_error(ErrorCode::ESCAPED_NULL);
     setType(ERROR);
 } -> popMode, mode(EXIT_STR_MODE);
@@ -258,27 +270,29 @@ NEWLINE_INSIDE : [\n] {
     register_error(ErrorCode::INVALID_ESCAPE_SEQUENCE);
     setType(ERROR);
 } -> popMode;
-VALID_ESCAPE_SEQUENCE_INSIDE : [\t\b] { add_escaped_char_to_string_buffer(getText()[0]); } -> skip;
+VALID_ESCAPE_SEQUENCE_INSIDE : [\t\b] {
+    add_escaped_char_to_string_buffer(getText()[0]);
+} -> skip;
 NON_PRINTABLES_INSIDE_STR : '\\'? ~[\u0020-\u007E\t\b\n] {
     if (getText()[0] == '\\')
         add_non_printable_char_to_buffer(getText()[1]);
     else
         add_non_printable_char_to_buffer(getText()[0]);
 } -> skip;
-ESCAPED_CHAR : '\\' . { add_escaped_char_to_string_buffer(getText()[1]); } -> skip;
+ESCAPED_CHAR : '\\' . {
+    add_escaped_char_to_string_buffer(getText()[1]);
+} -> skip;
 UNTERMINATED_ESCAPED_CHAR : '\\' EOF {
     clear_string_buffer();
     register_error(ErrorCode::EOF_IN_STRING);
     setType(ERROR); 
 };
 TEXT : ~["\\\n\r\f\b\t] {
-    if (string_buffer.size() > MAX_STR_CONST) {
-        clear_string_buffer();
-        register_error(ErrorCode::STRING_TOO_LONG);
-        setType(ERROR);
-    } else {
-        add_char_to_string_buffer(getText()[0]);
-    }
+    // if (string_buffer.size() + 1 > MAX_STR_CONST) {
+    //     setMode(STRING_OVERFLOW_MODE);
+    // } else {
+    add_char_to_string_buffer(getText()[0]);
+    // }
 } -> skip;
 EOF_INSIDE : ~["] EOF { 
     clear_string_buffer();
@@ -288,6 +302,16 @@ EOF_INSIDE : ~["] EOF {
 
 mode EXIT_STR_MODE;
 TEXT_AFTER_ERROR : .*? '"' -> skip, mode(DEFAULT_MODE);
-EOF_AFTER_ERROR: . EOF -> skip;
+EOF_AFTER_ERROR: .? EOF -> skip;
 
-
+mode STRING_OVERFLOW_MODE;
+TEXT_IN_OVERFLOW : .*? '"' {
+    clear_string_buffer();
+    register_error(ErrorCode::STRING_TOO_LONG);
+    setType(ERROR);
+} -> mode(DEFAULT_MODE);
+EOF_IN_OVERFLOW : .? EOF {
+    clear_string_buffer();
+    register_error(ErrorCode::EOF_IN_STRING);
+    setType(ERROR);
+} -> mode(DEFAULT_MODE);
