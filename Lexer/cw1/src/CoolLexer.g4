@@ -294,7 +294,7 @@ TEXT : ~["\\\n\r\f\b\t] {
     add_char_to_string_buffer(getText()[0]);
     // }
 } -> skip;
-EOF_INSIDE : ~["] EOF { 
+EOF_INSIDE : ~["\n] EOF { 
     clear_string_buffer();
     register_error(ErrorCode::EOF_IN_STRING);
     setType(ERROR); 
