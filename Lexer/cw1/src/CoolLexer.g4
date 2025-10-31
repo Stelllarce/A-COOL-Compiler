@@ -270,10 +270,10 @@ NEWLINE_INSIDE : [\n] {
     register_error(ErrorCode::INVALID_ESCAPE_SEQUENCE);
     setType(ERROR);
 } -> popMode;
-VALID_ESCAPE_SEQUENCE_INSIDE : [\t\b] {
+VALID_ESCAPE_SEQUENCE_INSIDE : [\t\b\f] {
     add_escaped_char_to_string_buffer(getText()[0]);
 } -> skip;
-NON_PRINTABLES_INSIDE_STR : '\\'? ~[\u0020-\u007E\t\b\n] {
+NON_PRINTABLES_INSIDE_STR : '\\'? ~[\u0020-\u007E\t\b\n\f] {
     if (getText()[0] == '\\')
         add_non_printable_char_to_buffer(getText()[1]);
     else
