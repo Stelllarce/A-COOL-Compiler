@@ -72,7 +72,7 @@ string cool_error_code_to_string(CoolLexer::ErrorCode code) {
             return "Unmatched";
         case CoolLexer::ErrorCode::EOF_IN_STRING:
             return "Unterminated string at EOF";
-        case CoolLexer::ErrorCode::EOF_IN_COMMENT:
+        case CoolLexer::ErrorCode::EOF_IN_COMMENT: // This might be a patchwork, but I dont see it used with the above unmatched case
             return "Unmatched (*";
         case CoolLexer::ErrorCode::STRING_TOO_LONG:
             return "String constant too long";
@@ -111,25 +111,24 @@ void dump_cool_token(CoolLexer *lexer, ostream &out, Token *token) {
         break;
     case CoolLexer::ERROR: {
         CoolLexer::ErrorCode error_code = lexer->get_error_code(token_start_char_index);
+        // Prints out a non-printable in <0xXX> format
         if (error_code == CoolLexer::ErrorCode::INVALID_SYMBOL_NON_PRINTABLE) {
             out << ": " << cool_error_code_to_string(CoolLexer::ErrorCode::INVALID_SYMBOL) << " \"" << lexer->convert_non_printable_to_hex(token->getText()[0]) << "\"";
         }
         else if (error_code == CoolLexer::ErrorCode::INVALID_SYMBOL) {
+            // Prints out escape sequences properly
             if (token->getText()[0] == '\\')
                 out << ": " << cool_error_code_to_string(error_code) << " \"\\" << token->getText() << "\"";
+            // Prints out normal characters
             else
                 out << ": " << cool_error_code_to_string(error_code) << " \"" << token->getText() << "\"";
         }
-        else if (error_code == CoolLexer::ErrorCode::EOF_IN_COMMENT ||
-                 error_code == CoolLexer::ErrorCode::EOF_IN_STRING ||
-                 error_code == CoolLexer::ErrorCode::INVALID_ESCAPE_SEQUENCE ||
-                 error_code == CoolLexer::ErrorCode::NULL_INSIDE_STRING ||
-                 error_code == CoolLexer::ErrorCode::ESCAPED_NULL ||
-                 error_code == CoolLexer::ErrorCode::STRING_TOO_LONG) {
-            out << ": " << cool_error_code_to_string(error_code);
-        }
-        else {
+        // Details for unmatched comment
+        else if (error_code == CoolLexer::ErrorCode::UNMATCHED_COMMENT) {
             out << ": " << cool_error_code_to_string(error_code) << " " << token->getText();
+        // Common case
+        } else {
+            out << ": " << cool_error_code_to_string(error_code);
         }
         break;
     }
