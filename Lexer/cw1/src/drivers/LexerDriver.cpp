@@ -106,8 +106,6 @@ void dump_cool_token(CoolLexer *lexer, ostream &out, Token *token) {
         break;
     case CoolLexer::TYPEID:
     case CoolLexer::OBJECTID:
-        out << " " << token->getText();
-        break;
     case CoolLexer::INT_CONST:
         out << " " << token->getText();
         break;
@@ -156,7 +154,16 @@ int main(int argc, const char *argv[]) {
 
     vector<Token *> tokens = tokenStream.getTokens();
     for (Token *token : tokens) {
-        dump_cool_token(&lexer, cout, token);
+        if (token->getChannel() == Token::DEFAULT_CHANNEL) 
+            dump_cool_token(&lexer, cout, token);
+
+        /**
+         * @note Uncomment to see dumped comments or whitespaces tokens on the hidden channels
+         */
+        // if (token->getChannel() == CoolLexer::COMMENTS)
+        //     dump_cool_token(&lexer, cout, token);
+        // if (token->getChannel() == CoolLexer::WHITESPACES)
+        //     dump_cool_token(&lexer, cout, token);
     };
 
     return 0;

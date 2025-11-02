@@ -1,10 +1,11 @@
 lexer grammar CoolLexer;
 
 @header { 
-    #include <iomanip>
+#include <iomanip>
 }
 
 options { language = Cpp; }
+channels { COMMENTS, WHITESPACES }
 
 @lexer::members {
     // Maximum length of a constant string literal (CSL) excluding the implicit
@@ -13,6 +14,10 @@ options { language = Cpp; }
     // Stores the current CSL as it's being built.
     std::vector<char> string_buffer;
 
+    // Maps token start indices to their corresponding string values.
+    std::map<int, std::string> string_values;
+
+    // Calculates the size of the buffer by counting escape sequences as single characters.
     size_t get_string_buffer_size() {
         size_t count = 0;
         // Counts escape sequences as single characters
@@ -38,10 +43,12 @@ options { language = Cpp; }
         return count;
     }
 
+    // Clear buffer
     void clear_string_buffer() {
         string_buffer.clear();
     }
 
+    // Converts non-printables to <0xXX> format
     std::string convert_non_printable_to_hex(char c) {
         std::stringstream ss;
         ss << "<0x"
@@ -52,6 +59,7 @@ options { language = Cpp; }
         return ss.str();
     }
 
+    // Special case for non-printables that need to be converted to hex first
     void add_non_printable_char_to_buffer(char c) {
         std::string hex_representation = convert_non_printable_to_hex(c);
         for (char ch : hex_representation) {
@@ -59,6 +67,7 @@ options { language = Cpp; }
         }
     }
 
+    // Appends a character to the string buffer
     void add_char_to_string_buffer(char c) {
         string_buffer.push_back(c);
     }
@@ -108,27 +117,30 @@ options { language = Cpp; }
 
     }
 
-    std::map<int, std::string> string_values;
-
+    // Associates the built string with the token's start index
     void assoc_string_with_token() {
         string_values[tokenStartCharIndex] = std::string(string_buffer.begin(), string_buffer.end());
     }
 
+    // Retrieves the string value associated with a token's start index
     std::string get_string_value(int token_start_char_index) {
         return string_values.at(token_start_char_index);
     }
 
+    // Boolean constants handling
     std::map<int, bool> bool_values;
 
+    // Associates a boolean value with the token's start index
     void assoc_bool_with_token(bool value) {
         bool_values[tokenStartCharIndex] = value;
     }
 
+    // Retrieves the boolean value associated with a token's start index
     bool get_bool_value(int token_start_char_index) {
         return bool_values.at(token_start_char_index);
     }
 
-
+    // Error types for tracking lexer errors
     enum class ErrorCode {
         UNMATCHED_COMMENT,
         EOF_IN_STRING,
@@ -141,12 +153,16 @@ options { language = Cpp; }
         INVALID_SYMBOL_NON_PRINTABLE,
     };
 
+    // Maps token start indices to their corresponding error codes,
+    // so line numbers can be retrieved later
     std::map<int, ErrorCode> err_codes;
 
+    // Registers an error code for the current token
     void register_error(ErrorCode code) {
         err_codes[tokenStartCharIndex] = code;
     }
 
+    // Retrieves the error code associated with a token's start index
     ErrorCode get_error_code(int token_start_char_index) {
         return err_codes.at(token_start_char_index);
     }
@@ -190,10 +206,12 @@ INT_CONST : [0-9]+;
 // };
 
 // --------------- identifiers -------------------
+
 TYPEID : [A-Z] [a-zA-Z0-9_]*;
 OBJECTID : [a-z] [a-zA-Z0-9_]*;
 
 // --------------- simple tokens -------------------
+
 SEMI   : ';';
 DARROW : '=>';
 COLON : ':';
@@ -216,8 +234,9 @@ TILDE  : '~';
 
 // --------------- comments -------------------
 
-LINE_COMMENT : '--' ~[\r\n]* -> skip;
-ML_COMMENT_START : '(*' -> pushMode(ML_COMMENT_MODE), skip;
+LINE_COMMENT : '--' ~[\n]* -> channel(COMMENTS);
+ML_COMMENT : ;
+ML_COMMENT_START : '(*' -> pushMode(ML_COMMENT_MODE), more;
 ML_COMMENT_UNMATCHED_END : '*)' { 
     register_error(ErrorCode::UNMATCHED_COMMENT);
     setType(ERROR); 
@@ -225,7 +244,7 @@ ML_COMMENT_UNMATCHED_END : '*)' {
 
 // --------------- whitespaces -------------------
 
-WS : [ \t\r\n\f]+ -> skip;
+WS : [ \t\r\n\f]+ -> channel(WHITESPACES);
 NON_PRINTABLES : ~[\u0020-\u007E\t\b\n\f] {
     register_error(ErrorCode::INVALID_SYMBOL_NON_PRINTABLE);
     setType(ERROR);
@@ -233,21 +252,28 @@ NON_PRINTABLES : ~[\u0020-\u007E\t\b\n\f] {
 
 // --------------- strings -------------------
 STR_CONST :;
-STR_START : '"' { clear_string_buffer(); } -> more, pushMode(STR_MODE);
+STR_START : '"' { clear_string_buffer(); } -> skip, pushMode(STR_MODE);
 
 // --------------- all errors -------------------
+
 ERROR : . { register_error(ErrorCode::INVALID_SYMBOL); };
 
 
 // --------------- modes -------------------
+// --------------- multi-line comments -------------------
+
 mode ML_COMMENT_MODE;
-NESTED_ML_COMMENT_START : '(*' -> pushMode(ML_COMMENT_MODE), skip;
-ML_COMMENT_END : '*)' -> popMode, skip;
-ML_COMMENT_ANY : . -> skip;
-ML_COMMENT_EOF : . EOF { 
+NESTED_ML_COMMENT_START : '(*' -> pushMode(ML_COMMENT_MODE), more;
+NESTED_ML_COMMENT_END : '*)' { modeStack.size() > 1 }? -> popMode, more;
+ML_COMMENT_END : '*)' { modeStack.size() == 1 }? -> popMode, type(ML_COMMENT), channel(COMMENTS);
+ML_COMMENT_ANY : . -> more;
+ML_COMMENT_EOF : EOF { 
+    tokenStartLine = getLine() - 1;
     register_error(ErrorCode::EOF_IN_COMMENT);
     setType(ERROR); 
 };
+
+// --------------- strings -------------------
 
 mode STR_MODE;
 STR_END : '"' { 
@@ -288,11 +314,7 @@ UNTERMINATED_ESCAPED_CHAR : '\\' EOF {
     setType(ERROR); 
 };
 TEXT : ~["\\\n\r\f\b\t] {
-    // if (string_buffer.size() + 1 > MAX_STR_CONST) {
-    //     setMode(STRING_OVERFLOW_MODE);
-    // } else {
     add_char_to_string_buffer(getText()[0]);
-    // }
 } -> skip;
 EOF_INSIDE : ~["\n] EOF { 
     clear_string_buffer();
@@ -300,9 +322,13 @@ EOF_INSIDE : ~["\n] EOF {
     setType(ERROR); 
 };
 
+// --------------- consume string after error -------------------
+
 mode EXIT_STR_MODE;
 TEXT_AFTER_ERROR : .*? '"' -> skip, mode(DEFAULT_MODE);
 EOF_AFTER_ERROR: .? EOF -> skip;
+
+// --------------- handle string overflow (more than buffer) -------------------
 
 mode STRING_OVERFLOW_MODE;
 TEXT_IN_OVERFLOW : .*? '"' {
