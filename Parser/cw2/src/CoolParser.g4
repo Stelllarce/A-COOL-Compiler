@@ -6,7 +6,7 @@ program: (class SEMI)+ ;
 
 class  : CLASS TYPEID (INHERITS TYPEID)? LBRACE (feature SEMI)* RBRACE ;
 
-feature: OBJECTID LPAREN (formal (COMMA formal)*)? COLON TYPEID LBRACE expr RBRACE
+feature: OBJECTID LPAREN (formal (COMMA formal)*)? RPAREN COLON TYPEID LBRACE expr RBRACE
        | OBJECTID COLON TYPEID (ASSIGN expr)?
        ;
 
@@ -19,6 +19,7 @@ expr   :   LPAREN expr RPAREN
        |   CASE expr OF (OBJECTID COLON TYPEID DARROW expr SEMI)+ ESAC
        |   LET OBJECTID COLON TYPEID (ASSIGN expr)? (COMMA OBJECTID COLON TYPEID (ASSIGN expr)?)* IN expr
        |   expr (AT TYPEID)? DOT OBJECTID LPAREN (expr (COMMA expr)*)? RPAREN
+       |   OBJECTID LPAREN (expr (COMMA expr)*)? RPAREN
        |   NEW TYPEID
        |   ISVOID expr
        |   TILDE expr
@@ -26,9 +27,7 @@ expr   :   LPAREN expr RPAREN
        |   expr DIV expr
        |   expr PLUS expr
        |   expr MINUS expr
-       |   expr LT expr
-       |   expr LE expr
-       |   expr EQ expr
+       |   expr (LT | LE | EQ) expr
        |   NOT expr
        |   <assoc=right> OBJECTID ASSIGN expr
        |   OBJECTID

@@ -13,6 +13,7 @@
 
 using namespace std;
 using namespace antlr4;
+using namespace antlr4::tree;
 
 namespace fs = filesystem;
 
@@ -24,6 +25,7 @@ string cool_token_to_string(CoolLexer *lexer, Token *token) {
     switch (token_type) {
         case static_cast<size_t>(-1) : return "EOF";
 
+        // Changed some token names to match my lexer
         case CoolLexer::SEMI   : return "';'";
         case CoolLexer::LBRACE : return "'{'";
         case CoolLexer::RBRACE : return "'}'";
@@ -75,39 +77,103 @@ string cool_token_to_string(CoolLexer *lexer, Token *token) {
     // clang-format on
 }
 
+// class ParseTree;
+
 class TreePrinter : public CoolParserBaseVisitor {
   private:
     CoolLexer *lexer_;
     CoolParser *parser_;
     string file_name_;
+    int indent_ = 0;
+
+    void print_indent() { cout << string(indent_, ' '); }
 
   public:
     TreePrinter(CoolLexer *lexer, CoolParser *parser, const string &file_name)
         : lexer_(lexer), parser_(parser), file_name_(file_name) {}
 
+    any visit(ParseTree *tree) override { return tree->accept(this); }
+
     any visitProgram(CoolParser::ProgramContext *ctx) override {
         cout << '#' << ctx->getStop()->getLine() << endl;
         cout << "_program" << endl;
+        indent_ += 2;
         visitChildren(ctx);
+        // for (auto&& classCtx : ctx->class_())
+        //     visit(ctx);
 
+        indent_ -= 2;
         return any{};
     }
 
     any visitClass(CoolParser::ClassContext *ctx) override {
-        cout << "  #" << ctx->getStop()->getLine() << endl;
-        cout << "  _class" << endl;
-        // cout << "    " << ctx->TYPEID()->getText() << endl;
-        for (auto entry : ctx->TYPEID()) {
-            cout << "    " << entry->getText() << endl;
-        }
-        cout << "    " << "Object" << endl;
-        cout << "    \"" << file_name_ << '"' << endl;
-        cout << "    " << '(' << endl;
-        cout << "    " << ')' << endl;
+        print_indent();
+        cout << '#' << ctx->getStop()->getLine() << endl;
+        print_indent();
+        cout << "_class" << endl;
+        indent_ += 2;
 
+        print_indent();
+        cout << ctx->TYPEID(0)->getText() << endl;
+
+        print_indent();
+        if (ctx->INHERITS()) {
+            cout << ctx->TYPEID(1)->getText() << endl;
+        } else {
+            cout << "Object" << endl;
+        }
+
+        print_indent();
+        cout << "\"" << file_name_ << "\"" << endl;
+        print_indent();
+        cout << "(" << endl;
+
+        for (auto feature_ctx : ctx->feature()) {
+            visit(feature_ctx);
+        }
+
+        print_indent();
+        cout << ")" << endl;
+        indent_ -= 2;
         return any{};
     }
 
+    any visitFeature(CoolParser::FeatureContext *ctx) override {
+        if (ctx->LPAREN() == nullptr) {
+            // indent_ += 2;
+            print_indent();
+            cout << '#' << ctx->getStart()->getLine() << endl;
+            print_indent();
+            cout << "_attr" << endl;
+            indent_ += 2;
+
+            print_indent();
+            cout << ctx->OBJECTID()->getText() << endl;
+            print_indent();
+            cout << ctx->TYPEID()->getText() << endl;
+
+            if (ctx->expr()) {
+                visit(ctx->expr());
+            } else {
+                print_indent();
+                cout << '#' << ctx->getStart()->getLine() << endl;
+                print_indent();
+                cout << "_no_expr" << endl;
+                print_indent();
+                cout << ": _no_type" << endl;
+            }
+            indent_ -= 2;
+        }
+        return nullptr;
+    }
+
+
+    any visitChildren(ParseTree *node) override {
+        for (auto child : node->children) {
+            child->accept(this);
+        }
+        return any{};
+    }
   public:
     void print() { visitProgram(parser_->program()); }
 };
