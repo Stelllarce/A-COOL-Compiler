@@ -77,7 +77,6 @@ string cool_token_to_string(CoolLexer *lexer, Token *token) {
     // clang-format on
 }
 
-// class ParseTree;
 
 class TreePrinter : public CoolParserBaseVisitor {
   private:
@@ -96,11 +95,9 @@ class TreePrinter : public CoolParserBaseVisitor {
 
     any visitProgram(CoolParser::ProgramContext *ctx) override {
         cout << '#' << ctx->getStop()->getLine() << endl;
-        cout << "_program" << endl;
+        cout << "_" << parser_->getRuleNames()[ctx->getRuleIndex()] << endl;
         indent_ += 2;
         visitChildren(ctx);
-        // for (auto&& classCtx : ctx->class_())
-        //     visit(ctx);
 
         indent_ -= 2;
         return any{};
@@ -110,7 +107,7 @@ class TreePrinter : public CoolParserBaseVisitor {
         print_indent();
         cout << '#' << ctx->getStop()->getLine() << endl;
         print_indent();
-        cout << "_class" << endl;
+        cout << "_" << parser_->getRuleNames()[ctx->getRuleIndex()] << endl;
         indent_ += 2;
 
         print_indent();
@@ -138,35 +135,382 @@ class TreePrinter : public CoolParserBaseVisitor {
         return any{};
     }
 
-    any visitFeature(CoolParser::FeatureContext *ctx) override {
-        if (ctx->LPAREN() == nullptr) {
-            // indent_ += 2;
+    any visitAttr(CoolParser::AttrContext *ctx) override {
+        print_indent();
+        cout << '#' << ctx->getStart()->getLine() << endl;
+        print_indent();
+        cout << "_" << parser_->getRuleNames()[ctx->getRuleIndex()] << endl;
+        indent_ += 2;
+
+        print_indent();
+        cout << ctx->OBJECTID()->getText() << endl;
+        print_indent();
+        cout << ctx->TYPEID()->getText() << endl;
+
+        if (ctx->expr()) {
+            visit(ctx->expr());
+        } else {
             print_indent();
             cout << '#' << ctx->getStart()->getLine() << endl;
             print_indent();
-            cout << "_attr" << endl;
+            cout << "_no_expr" << endl;
+            print_indent();
+            cout << ": _no_type" << endl;
+        }
+        indent_ -= 2;
+        return any{};
+    }
+
+    any visitFormal(CoolParser::FormalContext *ctx) {
+        print_indent();
+        cout << '#' << ctx->getStart()->getLine() << endl;
+        print_indent();
+        cout << "_" << parser_->getRuleNames()[ctx->getRuleIndex()] << endl;
+        indent_ += 2;
+
+        print_indent();
+        cout << ctx->OBJECTID()->getText() << endl;
+
+        print_indent();
+        cout << ctx->TYPEID()->getText() << endl;
+
+        indent_ -= 2;
+        return any{};
+    }
+
+    any visitAssign(CoolParser::AssignContext *ctx) {
+        print_indent();
+        cout << '#' << ctx->getStart()->getLine() << endl;
+        print_indent();
+        cout << "_assign" << endl;
+        indent_ += 2;
+
+        print_indent();
+        cout << ctx->OBJECTID()->getText() << endl;
+
+        visit(ctx->expr());
+
+        indent_ -= 2;
+        print_indent();
+        cout << ": _no_type" << endl;
+        return any{};
+    }
+
+    any visitMethod(CoolParser::MethodContext *ctx) override {
+        print_indent();
+        cout << '#' << ctx->getStop()->getLine() << endl;
+        print_indent();
+        cout << "_" << parser_->getRuleNames()[ctx->getRuleIndex()] << endl;
+        indent_ += 2;
+
+        print_indent();
+        cout << ctx->OBJECTID()->getText() << endl;
+
+        for (auto formal_ctx : ctx->formal()) {
+            visit(formal_ctx);
+        }
+
+        print_indent();
+        cout << ctx->TYPEID()->getText() << endl;
+
+        visit(ctx->expr());
+
+        indent_ -= 2;
+        return any{};
+    }
+
+    any visitObject(CoolParser::ObjectContext *ctx) override {
+        print_indent();
+        cout << '#' << ctx->getStart()->getLine() << endl;
+        print_indent();
+        cout << "_object" << endl;
+        indent_ += 2;
+        print_indent();
+        cout << ctx->OBJECTID()->getText() << endl;
+        indent_ -= 2;
+        print_indent();
+        cout << ": _no_type" << endl;
+        return any{};
+    }
+
+    any visitInt(CoolParser::IntContext *ctx) override {
+        print_indent();
+        cout << '#' << ctx->getStart()->getLine() << endl;
+        print_indent();
+        cout << "_int" << endl;
+        indent_ += 2;
+        print_indent();
+        cout << ctx->INT_CONST()->getText() << endl;
+        indent_ -= 2;
+        print_indent();
+        cout << ": _no_type" << endl;
+        return any{};
+    }
+
+    any visitString(CoolParser::StringContext *ctx) override {
+        print_indent();
+        cout << '#' << ctx->getStart()->getLine() << endl;
+        print_indent();
+        cout << "_string" << endl;
+        indent_ += 2;
+        print_indent();
+        cout << lexer_->get_string_value(ctx->STR_CONST()->getSymbol()->getStartIndex()) << endl;
+        indent_ -= 2;
+        print_indent();
+        cout << ": _no_type" << endl;
+        return any{};
+    }
+
+    any visitBool(CoolParser::BoolContext *ctx) override {
+        print_indent();
+        cout << '#' << ctx->getStart()->getLine() << endl;
+        print_indent();
+        cout << "_bool" << endl;
+        indent_ += 2;
+        print_indent();
+        cout << (lexer_->get_bool_value(ctx->BOOL_CONST()->getSymbol()->getStartIndex()) ? "1" : "0") << endl;
+        indent_ -= 2;
+        print_indent();
+        cout << ": _no_type" << endl;
+        return any{};
+    }
+
+    template<typename T>
+    any visitBinaryOp(T *ctx, const string& opName) {
+        print_indent();
+        cout << '#' << ctx->getStart()->getLine() << endl;
+        print_indent();
+        cout << opName << endl;
+        indent_ += 2;
+        visit(ctx->expr(0));
+        visit(ctx->expr(1));
+        indent_ -= 2;
+        print_indent();
+        cout << ": _no_type" << endl;
+        return any{};
+    }
+
+    any visitMult(CoolParser::MultContext *ctx) override { return visitBinaryOp(ctx, "_mul"); }
+    any visitDiv(CoolParser::DivContext *ctx) override { return visitBinaryOp(ctx, "_divide"); }
+    any visitPlus(CoolParser::PlusContext *ctx) override { return visitBinaryOp(ctx, "_plus"); }
+    any visitMinus(CoolParser::MinusContext *ctx) override { return visitBinaryOp(ctx, "_sub"); }
+    any visitComp(CoolParser::CompContext *ctx) override { return visitBinaryOp(ctx, "_comp"); }
+
+    template<typename T>
+    any visitUnaryOp(T *ctx, const string& opName) {
+        print_indent();
+        cout << '#' << ctx->getStart()->getLine() << endl;
+        print_indent();
+        cout << opName << endl;
+        indent_ += 2;
+        visit(ctx->expr());
+        indent_ -= 2;
+        print_indent();
+        cout << ": _no_type" << endl;
+        return any{};
+    }
+
+    any visitNeg(CoolParser::NegContext *ctx) override { return visitUnaryOp(ctx, "_neg"); }
+    any visitIsvoid(CoolParser::IsvoidContext *ctx) override { return visitUnaryOp(ctx, "_isvoid"); }
+    any visitNot(CoolParser::NotContext *ctx) override { return visitUnaryOp(ctx, "_comp"); }
+
+    any visitParen(CoolParser::ParenContext *ctx) override {
+        return visit(ctx->expr());
+    }
+
+    any visitStatic_dispatch(CoolParser::Static_dispatchContext *ctx) override {
+        print_indent();
+        cout << '#' << ctx->getStart()->getLine() << endl;
+        print_indent();
+        cout << "_static_dispatch" << endl;
+        indent_ += 2;
+        
+        visit(ctx->expr(0));
+
+        if (ctx->AT()) {
+            print_indent();
+            cout << ctx->TYPEID()->getText() << endl;
+        }
+
+        print_indent();
+        cout << ctx->OBJECTID()->getText() << endl;
+
+        print_indent();
+        cout << "(" << endl;
+        for (size_t i = 1; i < ctx->expr().size(); ++i) {
+            visit(ctx->expr(i));
+        }
+        print_indent();
+        cout << ")" << endl;
+
+        indent_ -= 2;
+        print_indent();
+        cout << ": _no_type" << endl;
+        return any{};
+    }
+
+    any visitDispatch(CoolParser::DispatchContext *ctx) override {
+        print_indent();
+        cout << '#' << ctx->getStart()->getLine() << endl;
+        print_indent();
+        cout << "_dispatch" << endl;
+        indent_ += 2;
+
+        print_indent();
+        cout << '#' << ctx->getStart()->getLine() << endl;
+        print_indent();
+        cout << "_object" << endl;
+        indent_ += 2;
+        print_indent();
+        cout << "self" << endl;
+        indent_ -= 2;
+        print_indent();
+        cout << ": _no_type" << endl;
+
+        print_indent();
+        cout << ctx->OBJECTID()->getText() << endl;
+
+        print_indent();
+        cout << "(" << endl;
+        for (auto expr_ctx : ctx->expr()) {
+            visit(expr_ctx);
+        }
+        print_indent();
+        cout << ")" << endl;
+
+        indent_ -= 2;
+        print_indent();
+        cout << ": _no_type" << endl;
+        return any{};
+    }
+
+    any visitCond(CoolParser::CondContext *ctx) override {
+        print_indent();
+        cout << '#' << ctx->getStart()->getLine() << endl;
+        print_indent();
+        cout << "_cond" << endl;
+        indent_ += 2;
+
+        visit(ctx->expr(0));
+        visit(ctx->expr(1));
+        visit(ctx->expr(2));
+
+        indent_ -= 2;
+        print_indent();
+        cout << ": _no_type" << endl;
+        return any{};
+    }
+
+    any visitLoop(CoolParser::LoopContext *ctx) override {
+        print_indent();
+        cout << '#' << ctx->getStart()->getLine() << endl;
+        print_indent();
+        cout << "_loop" << endl;
+        indent_ += 2;
+
+        visit(ctx->expr(0));
+        visit(ctx->expr(1));
+
+        indent_ -= 2;
+        print_indent();
+        cout << ": _no_type" << endl;
+        return any{};
+    }
+
+    any visitBlock(CoolParser::BlockContext *ctx) override {
+        print_indent();
+        cout << '#' << ctx->getStop()->getLine() << endl;
+        print_indent();
+        cout << "_block" << endl;
+        indent_ += 2;
+
+        for (auto expr_ctx : ctx->expr()) {
+            visit(expr_ctx);
+        }
+
+        indent_ -= 2;
+        print_indent();
+        cout << ": _no_type" << endl;
+        return any{};
+    }
+
+    void visitLetRecursion(CoolParser::LetContext *ctx, size_t index, const vector<CoolParser::ExprContext*>& init_exprs, size_t& init_idx) {
+        auto object_node = ctx->OBJECTID(index);
+        
+        print_indent();
+        cout << '#' << ctx->getStop()->getLine() << endl;
+        print_indent();
+        cout << "_let" << endl;
+        indent_ += 2;
+
+        print_indent();
+        cout << object_node->getText() << endl;
+        print_indent();
+        cout << ctx->TYPEID(index)->getText() << endl;
+
+        if (ctx->ASSIGN(index)) {
+            visit(init_exprs[init_idx++]);
+        } else {
+            print_indent();
+            cout << '#' << object_node->getSymbol()->getLine() << endl;
+            print_indent();
+            cout << "_no_expr" << endl;
+            print_indent();
+            cout << ": _no_type" << endl;
+        }
+
+        if (index + 1 < ctx->OBJECTID().size()) {
+            visitLetRecursion(ctx, index + 1, init_exprs, init_idx);
+        } else {
+            visit(ctx->expr().back());
+        }
+        indent_ -= 2;
+        print_indent();
+        cout << ": _no_type" << endl;
+    }
+
+    any visitLet(CoolParser::LetContext *ctx) override {
+        auto exprs = ctx->expr();
+        auto init_exprs = vector<CoolParser::ExprContext*>();
+        size_t init_idx = 0;
+
+        visitLetRecursion(ctx, 0, init_exprs, init_idx);
+        return any{};
+    }
+
+    any visitCase(CoolParser::CaseContext *ctx) override {
+        print_indent();
+        cout << '#' << ctx->getStop()->getLine() << endl;
+        print_indent();
+        cout << "_typcase" << endl;
+        indent_ += 2;
+
+        // visit the case variable
+        visit(ctx->expr(0));
+
+        for (size_t i = 0; i < ctx->OBJECTID().size(); ++i) {
+            print_indent();
+            cout << '#' << ctx->OBJECTID(i)->getSymbol()->getLine() << endl;
+            print_indent();
+            cout << "_branch" << endl;
             indent_ += 2;
 
             print_indent();
-            cout << ctx->OBJECTID()->getText() << endl;
-            print_indent();
-            cout << ctx->TYPEID()->getText() << endl;
+            cout << ctx->OBJECTID(i)->getText() << endl;
 
-            if (ctx->expr()) {
-                visit(ctx->expr());
-            } else {
-                print_indent();
-                cout << '#' << ctx->getStart()->getLine() << endl;
-                print_indent();
-                cout << "_no_expr" << endl;
-                print_indent();
-                cout << ": _no_type" << endl;
-            }
+            print_indent();
+            cout << ctx->TYPEID(i)->getText() << endl;
+
+            visit(ctx->expr(i + 1));
+
             indent_ -= 2;
         }
-        return nullptr;
-    }
 
+        indent_ -= 2;
+        print_indent();
+        cout << ": _no_type" << endl;
+        return any{};
+    }
 
     any visitChildren(ParseTree *node) override {
         for (auto child : node->children) {
