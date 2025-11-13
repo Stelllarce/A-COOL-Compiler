@@ -290,11 +290,24 @@ class TreePrinter : public CoolParserBaseVisitor {
         return any{};
     }
 
-    any visitMult(CoolParser::MultContext *ctx) override { return visitBinaryOp(ctx, "_mul"); }
-    any visitDiv(CoolParser::DivContext *ctx) override { return visitBinaryOp(ctx, "_divide"); }
-    any visitPlus(CoolParser::PlusContext *ctx) override { return visitBinaryOp(ctx, "_plus"); }
-    any visitMinus(CoolParser::MinusContext *ctx) override { return visitBinaryOp(ctx, "_sub"); }
-    any visitComp(CoolParser::CompContext *ctx) override { return visitBinaryOp(ctx, "_comp"); }
+    any visitMultdiv(CoolParser::MultdivContext *ctx) override {
+        string opName = ctx->MULT() ? "_mul" : "_divide";
+        return visitBinaryOp(ctx, opName);
+    }
+    any visitSubadd(CoolParser::SubaddContext *ctx) override {
+        string opName = ctx->PLUS() ? "_plus" : "_sub";
+        return visitBinaryOp(ctx, opName);
+    }
+    any visitComp(CoolParser::CompContext *ctx) override {
+        string opName;
+        if (ctx->LT())
+            opName = "_lt";
+        else if (ctx->LE())
+            opName = "_leq";
+        else
+            opName = "_eq";
+        return visitBinaryOp(ctx, opName);
+    }
 
     template<typename T>
     any visitUnaryOp(T *ctx, const string& opName) {
@@ -318,7 +331,7 @@ class TreePrinter : public CoolParserBaseVisitor {
         return visit(ctx->expr());
     }
 
-    any visitStatic_dispatch(CoolParser::Static_dispatchContext *ctx) override {
+    any visitStatdispatch(CoolParser::StatdispatchContext *ctx) override {
         print_indent();
         cout << '#' << ctx->getStart()->getLine() << endl;
         print_indent();
@@ -355,6 +368,32 @@ class TreePrinter : public CoolParserBaseVisitor {
         print_indent();
         cout << "_dispatch" << endl;
         indent_ += 2;
+        
+        visit(ctx->expr(0));
+
+        print_indent();
+        cout << ctx->OBJECTID()->getText() << endl;
+
+        print_indent();
+        cout << "(" << endl;
+        for (size_t i = 1; i < ctx->expr().size(); ++i) {
+            visit(ctx->expr(i));
+        }
+        print_indent();
+        cout << ")" << endl;
+
+        indent_ -= 2;
+        print_indent();
+        cout << ": _no_type" << endl;
+        return any{};
+    }
+
+    any visitSelfdispatch(CoolParser::SelfdispatchContext *ctx) override {
+        print_indent();
+        cout << '#' << ctx->getStart()->getLine() << endl;
+        print_indent();
+        cout << "_dispatch" << endl;
+        indent_ += 2;
 
         print_indent();
         cout << '#' << ctx->getStart()->getLine() << endl;
@@ -386,7 +425,7 @@ class TreePrinter : public CoolParserBaseVisitor {
 
     any visitCond(CoolParser::CondContext *ctx) override {
         print_indent();
-        cout << '#' << ctx->getStart()->getLine() << endl;
+        cout << '#' << ctx->getStop()->getLine() << endl;
         print_indent();
         cout << "_cond" << endl;
         indent_ += 2;
@@ -403,7 +442,7 @@ class TreePrinter : public CoolParserBaseVisitor {
 
     any visitLoop(CoolParser::LoopContext *ctx) override {
         print_indent();
-        cout << '#' << ctx->getStart()->getLine() << endl;
+        cout << '#' << ctx->getStop()->getLine() << endl;
         print_indent();
         cout << "_loop" << endl;
         indent_ += 2;
@@ -516,6 +555,22 @@ class TreePrinter : public CoolParserBaseVisitor {
         return any{};
     }
 
+    any visitNew(CoolParser::NewContext *ctx) override {
+        print_indent();
+        cout << '#' << ctx->getStart()->getLine() << endl;
+        print_indent();
+        cout << "_new" << endl;
+        indent_ += 2;
+
+        print_indent();
+        cout << ctx->TYPEID()->getText() << endl;
+
+        indent_ -= 2;
+        print_indent();
+        cout << ": _no_type" << endl;
+        return any{};
+    }
+
     any visitChildren(ParseTree *node) override {
         for (auto child : node->children) {
             child->accept(this);
@@ -531,7 +586,7 @@ class ErrorPrinter : public BaseErrorListener {
     string file_name_;
     CoolLexer *lexer_;
     bool has_error_ = false;
-
+    std::set<size_t> lines_with_errors_;
   public:
     ErrorPrinter(const string &file_name, CoolLexer *lexer)
         : file_name_(file_name), lexer_(lexer) {}
@@ -540,7 +595,12 @@ class ErrorPrinter : public BaseErrorListener {
                              size_t line, size_t charPositionInLine,
                              const std::string &msg,
                              std::exception_ptr e) override {
+        if (lines_with_errors_.count(line))
+            return;
+
+
         has_error_ = true;
+        lines_with_errors_.insert(line);
         cout << '"' << file_name_ << "\", line " << line
              << ": syntax error at or near "
              << cool_token_to_string(lexer_, offendingSymbol) << endl;
