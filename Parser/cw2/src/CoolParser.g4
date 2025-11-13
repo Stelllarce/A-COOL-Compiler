@@ -14,12 +14,14 @@ feature : method | attr ;
 
 formal : OBJECTID COLON TYPEID ;
 
+let_binding : OBJECTID COLON TYPEID (ASSIGN expr)? ;
+
 expr   : NEW TYPEID                                                                # new
        | IF expr THEN expr ELSE expr FI                                            # cond
        | WHILE expr LOOP expr POOL                                                 # loop
        | LBRACE (expr SEMI)+ RBRACE                                                # block
        | CASE expr OF (OBJECTID COLON TYPEID DARROW expr SEMI)+ ESAC               # case
-       | LET OBJECTID COLON TYPEID (ASSIGN expr)? (COMMA OBJECTID COLON TYPEID (ASSIGN expr)?)* IN expr # let
+       | LET let_binding (COMMA let_binding)* IN expr                              # let
        | LPAREN expr RPAREN                                                        # paren
        | OBJECTID                                                                  # object
        | INT_CONST                                                                 # int

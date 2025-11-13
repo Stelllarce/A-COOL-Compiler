@@ -254,7 +254,7 @@ class TreePrinter : public CoolParserBaseVisitor {
         cout << "_string" << endl;
         indent_ += 2;
         print_indent();
-        cout << lexer_->get_string_value(ctx->STR_CONST()->getSymbol()->getStartIndex()) << endl;
+        cout << "\"" <<lexer_->get_string_value(ctx->STR_CONST()->getSymbol()->getStartIndex()) << "\"" << endl;
         indent_ -= 2;
         print_indent();
         cout << ": _no_type" << endl;
@@ -434,47 +434,51 @@ class TreePrinter : public CoolParserBaseVisitor {
         return any{};
     }
 
-    void visitLetRecursion(CoolParser::LetContext *ctx, size_t index, const vector<CoolParser::ExprContext*>& init_exprs, size_t& init_idx) {
-        auto object_node = ctx->OBJECTID(index);
-        
+    void visitLetRecursion(const vector<CoolParser::Let_bindingContext*>& bindings, size_t index, CoolParser::ExprContext* body, size_t let_index) {
+        auto binding_ctx = bindings[index];
+
         print_indent();
-        cout << '#' << ctx->getStop()->getLine() << endl;
+        cout << '#' << let_index << endl;
         print_indent();
         cout << "_let" << endl;
         indent_ += 2;
 
         print_indent();
-        cout << object_node->getText() << endl;
+        cout << binding_ctx->OBJECTID()->getText() << endl;
         print_indent();
-        cout << ctx->TYPEID(index)->getText() << endl;
+        cout << binding_ctx->TYPEID()->getText() << endl;
 
-        if (ctx->ASSIGN(index)) {
-            visit(init_exprs[init_idx++]);
+        if (binding_ctx->expr()) {
+            visit(binding_ctx->expr());
         } else {
             print_indent();
-            cout << '#' << object_node->getSymbol()->getLine() << endl;
+            cout << '#' << binding_ctx->OBJECTID()->getSymbol()->getLine() << endl;
             print_indent();
             cout << "_no_expr" << endl;
             print_indent();
             cout << ": _no_type" << endl;
         }
 
-        if (index + 1 < ctx->OBJECTID().size()) {
-            visitLetRecursion(ctx, index + 1, init_exprs, init_idx);
+        if (index + 1 < bindings.size()) {
+            visitLetRecursion(bindings, index + 1, body, let_index);
         } else {
-            visit(ctx->expr().back());
+            visit(body);
         }
+
         indent_ -= 2;
         print_indent();
         cout << ": _no_type" << endl;
     }
 
     any visitLet(CoolParser::LetContext *ctx) override {
-        auto exprs = ctx->expr();
-        auto init_exprs = vector<CoolParser::ExprContext*>();
-        size_t init_idx = 0;
+        auto bindings = ctx->let_binding();
+        auto body = ctx->expr();
+        /**
+         * @note: seems like a patchwork, revisit later
+         */ 
+        auto let_index = ctx->getStop()->getLine();
 
-        visitLetRecursion(ctx, 0, init_exprs, init_idx);
+        visitLetRecursion(bindings, 0, body, let_index);
         return any{};
     }
 
