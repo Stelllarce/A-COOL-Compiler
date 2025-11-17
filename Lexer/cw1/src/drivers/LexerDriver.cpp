@@ -73,7 +73,7 @@ string cool_error_code_to_string(CoolLexer::ErrorCode code) {
         case CoolLexer::ErrorCode::EOF_IN_STRING:
             return "Unterminated string at EOF";
         case CoolLexer::ErrorCode::EOF_IN_COMMENT: // This might be a patchwork, but I dont see it used with the above unmatched case
-            return "Unmatched (*";
+            return "EOF in comment";
         case CoolLexer::ErrorCode::STRING_TOO_LONG:
             return "String constant too long";
         case CoolLexer::ErrorCode::INVALID_ESCAPE_SEQUENCE:
