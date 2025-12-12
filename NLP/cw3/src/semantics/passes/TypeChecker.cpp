@@ -202,7 +202,10 @@ any TypeChecker::visitMethod(CoolParser::MethodContext *ctx) {
         if (symbol_table.back().contains(name)) {
             errors.push_back("Formal parameter " + name + " is multiply defined");
         }
-        if (!type_ids.contains(type)) {
+        if (type == "SELF_TYPE") {
+             errors.push_back("Formal argument `" + name + "` declared of type `SELF_TYPE` which is not allowed");
+             types_ok = false;
+        } else if (!type_ids.contains(type)) {
              errors.push_back("Method `" + method_name + "` in class `" + current_class + "` declared to have an argument of type `" + type + "` which is undefined");
              types_ok = false;
         }
@@ -222,11 +225,14 @@ any TypeChecker::visitMethod(CoolParser::MethodContext *ctx) {
         return {};
     }
     
+    size_t errors_before = errors.size();
     auto body = visitExprAndAssertOk(ctx->expr());
     string body_type = type_names[body->get_type()];
     
-    if (!conform(body_type, return_type)) {
-        errors.push_back("In class `" + current_class + "` method `" + method_name + "`: `" + body_type + "` is not `" + return_type + "`: type of method body is not a subtype of return type");
+    if (errors.size() == errors_before || body_type != "Object") {
+        if (!conform(body_type, return_type)) {
+            errors.push_back("In class `" + current_class + "` method `" + method_name + "`: `" + body_type + "` is not `" + return_type + "`: type of method body is not a subtype of return type");
+        }
     }
     
     exitScope();
@@ -346,10 +352,74 @@ any TypeChecker::visitExpr(CoolParser::ExprContext *ctx) {
             
             if (!conform(val_type, var_type)) {
                 errors.push_back("In class `" + current_class + "` assignee `" + name + "`: `" + val_type + "` is not `" + var_type + "`: type of initialization expression is not a subtype of object type");
+                // On error, return the variable type to avoid cascading errors?
+                // In 082, this causes "Foo is not Bar" error because Foo (var type) !<= Bar (return type).
+                // In 048, this causes "Int is not Int" (valid) so no second error.
+                val_type = var_type;
             }
         }
         
         scratchpad.push(make_unique<Assignment>(name, move(val), type_ids.at(val_type)));
+        return nullptr;
+    }
+    
+    // Implicit Dispatch
+    if (!ctx->OBJECTID().empty() && ctx->children.size() > 1 && ctx->children[1]->getText() == "(") {
+        string method_name = ctx->OBJECTID(0)->getText();
+        
+        // Target is self
+        auto target = make_unique<ObjectReference>("self", type_ids.at("SELF_TYPE"));
+        string target_type = "SELF_TYPE";
+        
+        vector<unique_ptr<Expr>> args;
+        for (auto e : ctx->expr()) {
+            args.push_back(visitExprAndAssertOk(e));
+        }
+        
+        string lookup_type = current_class;
+        
+        string actual_method_type = "Object";
+        vector<string> formal_types;
+        bool method_found = false;
+        
+        string curr = lookup_type;
+        while (curr != "" && classes.contains(curr)) {
+            if (classes.at(curr).methods.contains(method_name)) {
+                auto& m = classes.at(curr).methods.at(method_name);
+                actual_method_type = m.return_type;
+                formal_types = m.arg_types;
+                method_found = true;
+                break;
+            }
+            curr = classes.at(curr).parent;
+        }
+        
+        if (!method_found) {
+            errors.push_back("Method `" + method_name + "` not defined for type `" + lookup_type + "` in dynamic dispatch");
+        } else {
+            if (args.size() != formal_types.size()) {
+                errors.push_back("Method `" + method_name + "` of type `" + lookup_type + "` called with the wrong number of arguments; " + to_string(formal_types.size()) + " arguments expected, but " + to_string(args.size()) + " provided");
+            } else {
+                for (size_t i = 0; i < args.size(); ++i) {
+                    string arg_type = type_names[args[i]->get_type()];
+                    if (!conform(arg_type, formal_types[i])) {
+                        errors.push_back("Invalid call to method `" + method_name + "` from class `" + lookup_type + "`:");
+                        errors.push_back("  `" + arg_type + "` is not a subtype of `" + formal_types[i] + "`: argument at position " + to_string(i) + " (0-indexed) has the wrong type");
+                    }
+                }
+            }
+        }
+        
+        string return_type = actual_method_type;
+        if (return_type == "SELF_TYPE") {
+            return_type = target_type; 
+        }
+        
+        if (!method_found) {
+            return_type = "Object";
+        }
+        
+        scratchpad.push(make_unique<DynamicDispatch>(move(target), method_name, move(args), type_ids.at(return_type)));
         return nullptr;
     }
     
@@ -427,9 +497,11 @@ any TypeChecker::visitExpr(CoolParser::ExprContext *ctx) {
             
             unique_ptr<Expr> init = nullptr;
             if (v->ASSIGN()) {
+                size_t errors_before = errors.size();
                 init = visitExprAndAssertOk(v->expr());
+                bool init_had_error = errors.size() > errors_before;
                 string init_type = type_names[init->get_type()];
-                if (!conform(init_type, type)) {
+                if (!init_had_error && !conform(init_type, type)) {
                     errors.push_back("Initializer for variable `" + name + "` in let-in expression is of type `" + init_type + "` which is not a subtype of the declared type `" + type + "`");
                 }
             }
@@ -459,11 +531,14 @@ any TypeChecker::visitExpr(CoolParser::ExprContext *ctx) {
         for (size_t i = 0; i < num_branches; ++i) {
             string name = ctx->OBJECTID(i)->getText();
             string type = ctx->TYPEID(i)->getText();
+            bool type_ok = true;
             
             if (type == "SELF_TYPE") {
                 errors.push_back("`" + name + "` in case-of-esac declared to be of type `SELF_TYPE` which is not allowed");
+                type_ok = false;
             } else if (!classes.contains(type)) {
                 errors.push_back("Option `" + name + "` in case-of-esac declared to have unknown type `" + type + "`");
+                type_ok = false;
             }
             
             if (branch_types.contains(type)) {
@@ -472,7 +547,9 @@ any TypeChecker::visitExpr(CoolParser::ExprContext *ctx) {
             branch_types.insert(type);
             
             enterScope();
-            addSymbol(name, type);
+            if (type_ok) {
+                addSymbol(name, type);
+            }
             
             auto branch_expr = visitExprAndAssertOk(ctx->expr(i+1));
             string branch_type = type_names[branch_expr->get_type()];
@@ -480,7 +557,8 @@ any TypeChecker::visitExpr(CoolParser::ExprContext *ctx) {
             if (join_type == "") join_type = branch_type;
             else join_type = lub(join_type, branch_type);
             
-            cases.emplace_back(name, type_ids.at(type), move(branch_expr));
+            int type_id = type_ok ? type_ids.at(type) : type_ids.at("Object");
+            cases.emplace_back(name, type_id, move(branch_expr));
             
             exitScope();
         }
@@ -491,19 +569,25 @@ any TypeChecker::visitExpr(CoolParser::ExprContext *ctx) {
     
     // Dispatch
     if (ctx->DOT()) {
+        size_t errors_before = errors.size();
         auto target = visitExprAndAssertOk(ctx->expr(0));
+        bool target_had_error = errors.size() > errors_before;
+        
         string target_type = type_names[target->get_type()];
         
         string method_name = ctx->OBJECTID(0)->getText();
         string static_type = "";
+        bool static_type_error = false;
         if (ctx->AT()) {
             static_type = ctx->TYPEID(0)->getText();
             if (static_type == "SELF_TYPE") {
                 errors.push_back("Static dispatch to SELF_TYPE.");
                 static_type = "Object";
+                static_type_error = true;
             } else if (!classes.contains(static_type)) {
                 errors.push_back("Undefined type `" + static_type + "` in static method dispatch");
                 static_type = "Object";
+                static_type_error = true;
             } else if (!conform(target_type, static_type)) {
                 errors.push_back("`" + target_type + "` is not a subtype of `" + static_type + "`");
             }
@@ -515,6 +599,7 @@ any TypeChecker::visitExpr(CoolParser::ExprContext *ctx) {
         }
         
         string lookup_type = static_type.empty() ? target_type : static_type;
+        if (static_type_error) lookup_type = target_type;
         if (lookup_type == "SELF_TYPE") lookup_type = current_class;
         
         string actual_method_type = "Object";
@@ -534,10 +619,12 @@ any TypeChecker::visitExpr(CoolParser::ExprContext *ctx) {
         }
         
         if (!method_found) {
-            if (ctx->AT()) {
-                errors.push_back("Method `" + method_name + "` not defined for type `" + lookup_type + "` in static dispatch");
-            } else {
-                errors.push_back("Method `" + method_name + "` not defined for type `" + lookup_type + "` in dynamic dispatch");
+            if (!target_had_error) {
+                if (ctx->AT()) {
+                    errors.push_back("Method `" + method_name + "` not defined for type `" + lookup_type + "` in static dispatch");
+                } else {
+                    errors.push_back("Method `" + method_name + "` not defined for type `" + lookup_type + "` in dynamic dispatch");
+                }
             }
         } else {
             if (args.size() != formal_types.size()) {
@@ -556,6 +643,10 @@ any TypeChecker::visitExpr(CoolParser::ExprContext *ctx) {
         string return_type = actual_method_type;
         if (return_type == "SELF_TYPE") {
             return_type = target_type; 
+        }
+        
+        if (!method_found) {
+            return_type = "Object";
         }
         
         if (ctx->AT()) {

@@ -43,11 +43,7 @@ expected<TypedProgram, vector<string>> CoolSemantics::run() {
         }
 
         if (classes_.contains(name)) {
-            if (name == "Object" || name == "IO" || name == "Int" || name == "String" || name == "Bool") {
-                 errors.push_back("Redefinition of basic class " + name + ".");
-            } else {
-                 errors.push_back("Class " + name + " was previously defined.");
-            }
+            errors.push_back("Type `" + name + "` already defined");
             fatal_error = true;
             continue;
         }
@@ -75,7 +71,7 @@ expected<TypedProgram, vector<string>> CoolSemantics::run() {
         }
 
         if (info.parent == "Int" || info.parent == "String" || info.parent == "Bool" || info.parent == "SELF_TYPE") {
-            errors.push_back("Class " + name + " cannot inherit class " + info.parent + ".");
+            errors.push_back("`" + name + "` inherits from `" + info.parent + "` which is an error");
             fatal_error = true;
         }
     }
