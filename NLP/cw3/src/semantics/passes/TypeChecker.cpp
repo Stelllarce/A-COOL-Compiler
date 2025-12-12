@@ -153,7 +153,9 @@ any TypeChecker::visitClass(CoolParser::ClassContext *ctx) {
         if (type_ids.contains(type)) {
             addSymbol(name, type);
         }
+    }
 
+    for (auto attr : ctx->attr()) {
         any res = visit(attr);
         if (res.has_value()) {
             unique_ptr<Attribute> a(any_cast<Attribute*>(res));
@@ -253,10 +255,14 @@ any TypeChecker::visitAttr(CoolParser::AttrContext *ctx) {
 
     unique_ptr<Expr> init = nullptr;
     if (ctx->ASSIGN()) {
+        size_t errors_before = errors.size();
         init = visitExprAndAssertOk(ctx->expr());
         string init_type = type_names[init->get_type()];
-        if (!conform(init_type, type)) {
-            errors.push_back("In class `" + current_class + "` attribute `" + name + "`: `" + init_type + "` is not `" + type + "`: type of initialization expression is not a subtype of declared type");
+        
+        if (errors.size() == errors_before) {
+            if (!conform(init_type, type)) {
+                errors.push_back("In class `" + current_class + "` attribute `" + name + "`: `" + init_type + "` is not `" + type + "`: type of initialization expression is not a subtype of declared type");
+            }
         }
     }
     
@@ -311,6 +317,33 @@ any TypeChecker::visitExpr(CoolParser::ExprContext *ctx) {
             errors.push_back("Assignee named `" + name + "` not in scope");
             var_type = "Object";
         } else {
+            // If we are in an attribute initialization, we might be assigning to the attribute itself.
+            // But wait, the attribute is already in the symbol table (we added it in visitClass).
+            // The issue in 048 is: bar : Int <- bar <- "hello";
+            // The inner assignment is bar <- "hello".
+            // bar is Int. "hello" is String.
+            // So inner assignment fails: String is not Int.
+            // The inner assignment returns String (type of "hello").
+            // The outer assignment is bar : Int <- (bar <- "hello").
+            // So it's initializing bar with the result of the inner assignment.
+            // The result of inner assignment is String.
+            // So outer initialization fails: String is not Int.
+            
+            // The expected output only shows ONE error:
+            // In class `Foo` assignee `bar`: `String` is not `Int`: type of initialization expression is not a subtype of object type
+            
+            // This corresponds to the inner assignment failure.
+            // The outer initialization failure (attribute init) seems to be suppressed or not reported?
+            // Or maybe the inner assignment returns the type of the variable being assigned to?
+            // No, assignment returns the value of the expression.
+            
+            // Let's check the manual.
+            // "The value of an assignment is the value of the expression on the right hand side."
+            
+            // So why is the second error not reported?
+            // Maybe because the inner expression already had an error?
+            // If we suppress cascading errors?
+            
             if (!conform(val_type, var_type)) {
                 errors.push_back("In class `" + current_class + "` assignee `" + name + "`: `" + val_type + "` is not `" + var_type + "`: type of initialization expression is not a subtype of object type");
             }
