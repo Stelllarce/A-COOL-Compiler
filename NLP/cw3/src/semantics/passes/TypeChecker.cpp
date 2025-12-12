@@ -28,12 +28,10 @@
 #include "semantics/typed-ast/Vardecl.h"
 #include "semantics/typed-ast/WhileLoopPool.h"
 
-#include <iostream>
-
 using namespace std;
 
-vector<string> TypeChecker::check(CoolParser *parser) {
-    visit(parser->program());
+vector<string> TypeChecker::check(CoolParser::ProgramContext *ctx) {
+    visit(ctx);
     return errors;
 }
 
@@ -109,6 +107,17 @@ string TypeChecker::lub(string type1, string type2) {
     return t1;
 }
 
+unique_ptr<Expr> TypeChecker::visitExprAndAssertOk(CoolParser::ExprContext *ctx) {
+    visitExpr(ctx);
+    if (scratchpad.empty()) {
+        assert(false && "ICE: scratchpad is empty after visitExpr, but "
+               "caller expects an Expr there");
+    }
+    auto expr = move(scratchpad.top());
+    scratchpad.pop();
+    return move(expr);
+}
+
 any TypeChecker::visitProgram(CoolParser::ProgramContext *ctx) {
     for (auto class_ctx : ctx->class_()) {
         visit(class_ctx);
@@ -129,18 +138,40 @@ any TypeChecker::visitClass(CoolParser::ClassContext *ctx) {
     enterScope();
     addSymbol("self", "SELF_TYPE");
     
+    // Add inherited attributes
+    string curr = parent;
+    while (curr != "Object" && classes.contains(curr)) {
+        for (auto const& [name, info] : classes.at(curr).attributes) {
+             addSymbol(name, info.type);
+        }
+        curr = classes.at(curr).parent;
+    }
+
     for (auto attr : ctx->attr()) {
+        string name = attr->OBJECTID()->getText();
+        string type = attr->TYPEID()->getText();
+        addSymbol(name, type);
+
         any res = visit(attr);
         if (res.has_value()) {
             unique_ptr<Attribute> a(any_cast<Attribute*>(res));
             typed_class.attributes.add(move(*a));
         }
     }
+    std::set<string> seen_methods;
     for (auto method : ctx->method()) {
+        string method_name = method->OBJECTID()->getText();
+        if (seen_methods.contains(method_name)) {
+            continue;
+        }
+        seen_methods.insert(method_name);
+
         any res = visit(method);
         if (res.has_value()) {
             unique_ptr<Method> m(any_cast<Method*>(res));
-            typed_class.methods.add_method(move(*m));
+            if (!typed_class.methods.contains(m->get_name())) {
+                typed_class.methods.add_method(move(*m));
+            }
         }
     }
     
@@ -156,6 +187,7 @@ any TypeChecker::visitMethod(CoolParser::MethodContext *ctx) {
     
     vector<string> arg_names;
     vector<string> arg_types;
+    bool types_ok = true;
     
     for (auto formal : ctx->formal()) {
         string name = formal->OBJECTID()->getText();
@@ -166,18 +198,31 @@ any TypeChecker::visitMethod(CoolParser::MethodContext *ctx) {
         if (symbol_table.back().contains(name)) {
             errors.push_back("Formal parameter " + name + " is multiply defined");
         }
+        if (!type_ids.contains(type)) {
+             errors.push_back("Method `" + method_name + "` in class `" + current_class + "` declared to have an argument of type `" + type + "` which is undefined");
+             types_ok = false;
+        }
         addSymbol(name, type);
         arg_names.push_back(name);
         arg_types.push_back(type);
     }
     
-    any body_res = visit(ctx->expr());
-    unique_ptr<Expr> body(any_cast<Expr*>(body_res));
-    string body_type = type_names[body->get_type()];
     string return_type = ctx->TYPEID()->getText();
+    if (!type_ids.contains(return_type)) {
+        errors.push_back("Method `" + method_name + "` in class `" + current_class + "` declared to have return type `" + return_type + "` which is undefined");
+        types_ok = false;
+    }
+
+    if (!types_ok) {
+        exitScope();
+        return {};
+    }
+    
+    auto body = visitExprAndAssertOk(ctx->expr());
+    string body_type = type_names[body->get_type()];
     
     if (!conform(body_type, return_type)) {
-        errors.push_back("In class " + current_class + " method " + method_name + ": " + body_type + " is not " + return_type + ": type of method body is not a subtype of return type");
+        errors.push_back("In class `" + current_class + "` method `" + method_name + "`: `" + body_type + "` is not `" + return_type + "`: type of method body is not a subtype of return type");
     }
     
     exitScope();
@@ -202,11 +247,10 @@ any TypeChecker::visitAttr(CoolParser::AttrContext *ctx) {
     
     unique_ptr<Expr> init = nullptr;
     if (ctx->ASSIGN()) {
-        any init_result = visit(ctx->expr());
-        init.reset(any_cast<Expr*>(init_result));
+        init = visitExprAndAssertOk(ctx->expr());
         string init_type = type_names[init->get_type()];
         if (!conform(init_type, type)) {
-            errors.push_back("Inferred type " + init_type + " of initialization of attribute " + name + " does not conform to declared type " + type + ".");
+            errors.push_back("In class `" + current_class + "` attribute `" + name + "`: `" + init_type + "` is not `" + type + "`: type of initialization expression is not a subtype of declared type");
         }
     }
     
@@ -222,13 +266,16 @@ any TypeChecker::visitFormal(CoolParser::FormalContext *ctx) {
 any TypeChecker::visitExpr(CoolParser::ExprContext *ctx) {
     // Literals
     if (ctx->INT_CONST()) {
-        return (Expr*)new IntConstant(stoi(ctx->INT_CONST()->getText()), type_ids.at("Int"));
+        scratchpad.push(std::make_unique<IntConstant>(stoi(ctx->INT_CONST()->getText()), type_ids.at("Int")));
+        return nullptr;
     }
     if (ctx->STR_CONST()) {
-        return (Expr*)new StringConstant(ctx->STR_CONST()->getText(), type_ids.at("String"));
+        scratchpad.push(std::make_unique<StringConstant>(ctx->STR_CONST()->getText(), type_ids.at("String")));
+        return nullptr;
     }
     if (ctx->BOOL_CONST()) {
-        return (Expr*)new BoolConstant(ctx->BOOL_CONST()->getText() == "true", type_ids.at("Bool"));
+        scratchpad.push(std::make_unique<BoolConstant>(ctx->BOOL_CONST()->getText() == "true", type_ids.at("Bool")));
+        return nullptr;
     }
     
     // Variable
@@ -236,10 +283,11 @@ any TypeChecker::visitExpr(CoolParser::ExprContext *ctx) {
         string name = ctx->OBJECTID(0)->getText();
         string type = lookupSymbol(name);
         if (type == "") {
-            errors.push_back("Undeclared identifier " + name + ".");
+            errors.push_back("Variable named `" + name + "` not in scope");
             type = "Object"; 
         }
-        return (Expr*)new ObjectReference(name, type_ids.at(type));
+        scratchpad.push(make_unique<ObjectReference>(name, type_ids.at(type)));
+        return nullptr;
     }
     
     // Assignment
@@ -249,67 +297,65 @@ any TypeChecker::visitExpr(CoolParser::ExprContext *ctx) {
             errors.push_back("Cannot assign to 'self'.");
         }
         
-        any val_res = visit(ctx->expr(0));
-        unique_ptr<Expr> val(any_cast<Expr*>(val_res));
+        auto val = visitExprAndAssertOk(ctx->expr(0));
         string val_type = type_names[val->get_type()];
         
         string var_type = lookupSymbol(name);
         if (var_type == "") {
-            errors.push_back("Assignment to undeclared variable " + name + ".");
+            errors.push_back("Assignee named `" + name + "` not in scope");
             var_type = "Object";
         } else {
             if (!conform(val_type, var_type)) {
-                errors.push_back("Type " + val_type + " of assigned expression does not conform to declared type " + var_type + " of identifier " + name + ".");
+                errors.push_back("In class `" + current_class + "` assignee `" + name + "`: `" + val_type + "` is not `" + var_type + "`: type of initialization expression is not a subtype of object type");
             }
         }
         
-        return (Expr*)new Assignment(name, move(val), type_ids.at(val_type));
+        scratchpad.push(make_unique<Assignment>(name, move(val), type_ids.at(val_type)));
+        return nullptr;
     }
     
     // New
     if (ctx->NEW()) {
         string type = ctx->TYPEID(0)->getText();
         if (type != "SELF_TYPE" && !classes.contains(type)) {
-            errors.push_back("'new' used with undefined class " + type + ".");
+            errors.push_back("Attempting to instantiate unknown class `" + type + "`");
             type = "Object";
         }
-        return (Expr*)new NewObject(type_ids.at(type));
+        scratchpad.push(make_unique<NewObject>(type_ids.at(type)));
+        return nullptr;
     }
     
     // If
     if (ctx->IF()) {
-        any pred_res = visit(ctx->expr(0));
-        unique_ptr<Expr> pred(any_cast<Expr*>(pred_res));
+        auto pred = visitExprAndAssertOk(ctx->expr(0));
         string pred_type = type_names[pred->get_type()];
         if (pred_type != "Bool") {
-            errors.push_back("Predicate of 'if' does not have type Bool.");
+            errors.push_back("Type `" + pred_type + "` of if-then-else-fi condition is not `Bool`");
         }
         
-        any then_res = visit(ctx->expr(1));
-        unique_ptr<Expr> then_e(any_cast<Expr*>(then_res));
+        auto then_e = visitExprAndAssertOk(ctx->expr(1));
         string then_type = type_names[then_e->get_type()];
         
-        any else_res = visit(ctx->expr(2));
-        unique_ptr<Expr> else_e(any_cast<Expr*>(else_res));
+        auto else_e = visitExprAndAssertOk(ctx->expr(2));
         string else_type = type_names[else_e->get_type()];
         
         string join_type = lub(then_type, else_type);
-        return (Expr*)new IfThenElseFi(move(pred), move(then_e), move(else_e), type_ids.at(join_type));
+        scratchpad.push(make_unique<IfThenElseFi>(move(pred), move(then_e), move(else_e), type_ids.at(join_type)));
+        return nullptr;
     }
     
     // While
     if (ctx->WHILE()) {
-        any pred_res = visit(ctx->expr(0));
-        unique_ptr<Expr> pred(any_cast<Expr*>(pred_res));
+        auto pred = visitExprAndAssertOk(ctx->expr(0));
         string pred_type = type_names[pred->get_type()];
         if (pred_type != "Bool") {
-            errors.push_back("Loop condition does not have type Bool.");
+            errors.push_back("Type `" + pred_type + "` of while-loop-pool condition is not `Bool`");
         }
         
-        any body_res = visit(ctx->expr(1));
-        unique_ptr<Expr> body(any_cast<Expr*>(body_res));
+        auto body = visitExprAndAssertOk(ctx->expr(1));
         
-        return (Expr*)new WhileLoopPool(move(pred), move(body), type_ids.at("Object"));
+        scratchpad.push(make_unique<WhileLoopPool>(move(pred), move(body), type_ids.at("Object")));
+        return nullptr;
     }
     
     // Block
@@ -317,12 +363,12 @@ any TypeChecker::visitExpr(CoolParser::ExprContext *ctx) {
         vector<unique_ptr<Expr>> exprs;
         string last_type = "Object"; 
         for (auto e : ctx->expr()) {
-            any res = visit(e);
-            unique_ptr<Expr> expr(any_cast<Expr*>(res));
+            auto expr = visitExprAndAssertOk(e);
             last_type = type_names[expr->get_type()];
             exprs.push_back(move(expr));
         }
-        return (Expr*)new Sequence(move(exprs), type_ids.at(last_type));
+        scratchpad.push(make_unique<Sequence>(move(exprs), type_ids.at(last_type)));
+        return nullptr;
     }
     
     // Let
@@ -336,17 +382,16 @@ any TypeChecker::visitExpr(CoolParser::ExprContext *ctx) {
                 errors.push_back("'self' cannot be bound in a 'let' expression.");
             }
             if (type != "SELF_TYPE" && !classes.contains(type)) {
-                errors.push_back("Class " + type + " of let-bound identifier " + name + " is undefined.");
+                errors.push_back("Class `" + type + "` of let-bound identifier `" + name + "` is undefined");
                 type = "Object";
             }
             
             unique_ptr<Expr> init = nullptr;
             if (v->ASSIGN()) {
-                any init_res = visit(v->expr());
-                init.reset(any_cast<Expr*>(init_res));
+                init = visitExprAndAssertOk(v->expr());
                 string init_type = type_names[init->get_type()];
                 if (!conform(init_type, type)) {
-                    errors.push_back("Inferred type " + init_type + " of initialization of " + name + " does not conform to identifier's declared type " + type + ".");
+                    errors.push_back("Initializer for variable `" + name + "` in let-in expression is of type `" + init_type + "` which is not a subtype of the declared type `" + type + "`");
                 }
             }
             
@@ -354,18 +399,17 @@ any TypeChecker::visitExpr(CoolParser::ExprContext *ctx) {
             decls.push_back(unique_ptr<Vardecl>(new Vardecl(name, move(init), type_ids.at(type))));
         }
         
-        any body_res = visit(ctx->expr(0)); 
-        unique_ptr<Expr> body(any_cast<Expr*>(body_res));
+        auto body = visitExprAndAssertOk(ctx->expr(0));
         
         exitScope();
         
-        return (Expr*)new LetIn(move(decls), move(body), body->get_type());
+        scratchpad.push(make_unique<LetIn>(move(decls), move(body), body->get_type()));
+        return nullptr;
     }
     
     // Case
     if (ctx->CASE()) {
-        any expr_res = visit(ctx->expr(0));
-        unique_ptr<Expr> expr(any_cast<Expr*>(expr_res));
+        auto expr = visitExprAndAssertOk(ctx->expr(0));
         
         vector<CaseOfEsac::Case> cases;
         string join_type = "";
@@ -378,21 +422,20 @@ any TypeChecker::visitExpr(CoolParser::ExprContext *ctx) {
             string type = ctx->TYPEID(i)->getText();
             
             if (type == "SELF_TYPE") {
-                errors.push_back("Identifier " + name + " declared with type SELF_TYPE in case branch.");
+                errors.push_back("`" + name + "` in case-of-esac declared to be of type `SELF_TYPE` which is not allowed");
             } else if (!classes.contains(type)) {
-                errors.push_back("Class " + type + " of case branch is undefined.");
+                errors.push_back("Option `" + name + "` in case-of-esac declared to have unknown type `" + type + "`");
             }
             
             if (branch_types.contains(type)) {
-                errors.push_back("Duplicate branch " + type + " in case statement.");
+                errors.push_back("Multiple options match on type `" + type + "`");
             }
             branch_types.insert(type);
             
             enterScope();
             addSymbol(name, type);
             
-            any branch_res = visit(ctx->expr(i+1));
-            unique_ptr<Expr> branch_expr(any_cast<Expr*>(branch_res));
+            auto branch_expr = visitExprAndAssertOk(ctx->expr(i+1));
             string branch_type = type_names[branch_expr->get_type()];
             
             if (join_type == "") join_type = branch_type;
@@ -403,13 +446,13 @@ any TypeChecker::visitExpr(CoolParser::ExprContext *ctx) {
             exitScope();
         }
         
-        return (Expr*)new CaseOfEsac(move(expr), move(cases), ctx->getStart()->getLine(), type_ids.at(join_type));
+        scratchpad.push(make_unique<CaseOfEsac>(move(expr), move(cases), ctx->getStart()->getLine(), type_ids.at(join_type)));
+        return nullptr;
     }
     
     // Dispatch
     if (ctx->DOT()) {
-        any target_res = visit(ctx->expr(0));
-        unique_ptr<Expr> target(any_cast<Expr*>(target_res));
+        auto target = visitExprAndAssertOk(ctx->expr(0));
         string target_type = type_names[target->get_type()];
         
         string method_name = ctx->OBJECTID(0)->getText();
@@ -420,17 +463,16 @@ any TypeChecker::visitExpr(CoolParser::ExprContext *ctx) {
                 errors.push_back("Static dispatch to SELF_TYPE.");
                 static_type = "Object";
             } else if (!classes.contains(static_type)) {
-                errors.push_back("Static dispatch to undefined class " + static_type + ".");
+                errors.push_back("Undefined type `" + static_type + "` in static method dispatch");
                 static_type = "Object";
             } else if (!conform(target_type, static_type)) {
-                errors.push_back("Expression type " + target_type + " does not conform to declared static dispatch type " + static_type + ".");
+                errors.push_back("`" + target_type + "` is not a subtype of `" + static_type + "`");
             }
         }
         
         vector<unique_ptr<Expr>> args;
         for (size_t i = 1; i < ctx->expr().size(); ++i) {
-            any arg_res = visit(ctx->expr(i));
-            args.push_back(unique_ptr<Expr>(any_cast<Expr*>(arg_res)));
+            args.push_back(visitExprAndAssertOk(ctx->expr(i)));
         }
         
         string lookup_type = static_type.empty() ? target_type : static_type;
@@ -453,15 +495,20 @@ any TypeChecker::visitExpr(CoolParser::ExprContext *ctx) {
         }
         
         if (!method_found) {
-            errors.push_back("Dispatch to undefined method " + method_name + ".");
+            if (ctx->AT()) {
+                errors.push_back("Method `" + method_name + "` not defined for type `" + lookup_type + "` in static dispatch");
+            } else {
+                errors.push_back("Method `" + method_name + "` not defined for type `" + lookup_type + "` in dynamic dispatch");
+            }
         } else {
             if (args.size() != formal_types.size()) {
-                errors.push_back("Method " + method_name + " called with wrong number of arguments.");
+                errors.push_back("Method `" + method_name + "` of type `" + lookup_type + "` called with the wrong number of arguments; " + to_string(formal_types.size()) + " arguments expected, but " + to_string(args.size()) + " provided");
             } else {
                 for (size_t i = 0; i < args.size(); ++i) {
                     string arg_type = type_names[args[i]->get_type()];
                     if (!conform(arg_type, formal_types[i])) {
-                        errors.push_back("In call of method " + method_name + ", type " + arg_type + " of parameter " + "..." + " does not conform to declared type " + formal_types[i] + ".");
+                        errors.push_back("Invalid call to method `" + method_name + "` from class `" + lookup_type + "`:");
+                        errors.push_back("  `" + arg_type + "` is not a subtype of `" + formal_types[i] + "`: argument at position " + to_string(i) + " (0-indexed) has the wrong type");
                     }
                 }
             }
@@ -473,24 +520,26 @@ any TypeChecker::visitExpr(CoolParser::ExprContext *ctx) {
         }
         
         if (ctx->AT()) {
-             return (Expr*)new StaticDispatch(move(target), type_ids.at(static_type), method_name, move(args), type_ids.at(return_type));
+             scratchpad.push(make_unique<StaticDispatch>(move(target), type_ids.at(static_type), method_name, move(args), type_ids.at(return_type)));
         } else {
-             return (Expr*)new DynamicDispatch(move(target), method_name, move(args), type_ids.at(return_type));
+             scratchpad.push(make_unique<DynamicDispatch>(move(target), method_name, move(args), type_ids.at(return_type)));
         }
+        return nullptr;
     }
     
     // Operations
     if (ctx->PLUS() || ctx->MINUS() || ctx->STAR() || ctx->SLASH()) {
-        any l_res = visit(ctx->expr(0));
-        any r_res = visit(ctx->expr(1));
-        unique_ptr<Expr> l(any_cast<Expr*>(l_res));
-        unique_ptr<Expr> r(any_cast<Expr*>(r_res));
+        auto l = visitExprAndAssertOk(ctx->expr(0));
+        auto r = visitExprAndAssertOk(ctx->expr(1));
         
         string l_type = type_names[l->get_type()];
         string r_type = type_names[r->get_type()];
         
-        if (l_type != "Int" || r_type != "Int") {
-            errors.push_back("non-Int arguments: " + l_type + " + " + r_type);
+        if (l_type != "Int") {
+            errors.push_back("Left-hand-side of arithmetic expression is not of type `Int`, but of type `" + l_type + "`");
+        }
+        if (r_type != "Int") {
+            errors.push_back("Right-hand-side of arithmetic expression is not of type `Int`, but of type `" + r_type + "`");
         }
         
         Arithmetic::Kind op;
@@ -499,15 +548,14 @@ any TypeChecker::visitExpr(CoolParser::ExprContext *ctx) {
         else if (ctx->STAR()) op = Arithmetic::Kind::Multiplication;
         else op = Arithmetic::Kind::Division;
         
-        return (Expr*)new Arithmetic(move(l), move(r), op, type_ids.at("Int"));
+        scratchpad.push(make_unique<Arithmetic>(move(l), move(r), op, type_ids.at("Int")));
+        return nullptr;
     }
     
     // Comparison
     if (ctx->LT() || ctx->LE() || ctx->EQ()) {
-        any l_res = visit(ctx->expr(0));
-        any r_res = visit(ctx->expr(1));
-        unique_ptr<Expr> l(any_cast<Expr*>(l_res));
-        unique_ptr<Expr> r(any_cast<Expr*>(r_res));
+        auto l = visitExprAndAssertOk(ctx->expr(0));
+        auto r = visitExprAndAssertOk(ctx->expr(1));
         
         string l_type = type_names[l->get_type()];
         string r_type = type_names[r->get_type()];
@@ -516,51 +564,60 @@ any TypeChecker::visitExpr(CoolParser::ExprContext *ctx) {
             if ((l_type == "Int" || l_type == "String" || l_type == "Bool" ||
                  r_type == "Int" || r_type == "String" || r_type == "Bool") &&
                 l_type != r_type) {
-                errors.push_back("Illegal comparison with a basic type.");
+                errors.push_back("A `" + l_type + "` can only be compared to another `" + l_type + "` and not to a `" + r_type + "`");
             }
-            return (Expr*)new EqualityComparison(move(l), move(r), type_ids.at("Bool"));
+            scratchpad.push(make_unique<EqualityComparison>(move(l), move(r), type_ids.at("Bool")));
         } else {
-            if (l_type != "Int" || r_type != "Int") {
-                errors.push_back("non-Int arguments: " + l_type + " < " + r_type);
+            if (l_type != "Int") {
+                errors.push_back("Left-hand-side of integer comparison is not of type `Int`, but of type `" + l_type + "`");
             }
-            if (ctx->LT()) return (Expr*)new IntegerComparison(move(l), move(r), IntegerComparison::Kind::LessThan, type_ids.at("Bool"));
-            else return (Expr*)new IntegerComparison(move(l), move(r), IntegerComparison::Kind::LessThanEqual, type_ids.at("Bool"));
+            if (r_type != "Int") {
+                errors.push_back("Right-hand-side of integer comparison is not of type `Int`, but of type `" + r_type + "`");
+            }
+            if (ctx->LT()) {
+                scratchpad.push(make_unique<IntegerComparison>(move(l), move(r), IntegerComparison::Kind::LessThan, type_ids.at("Bool")));
+            } else {
+                scratchpad.push(make_unique<IntegerComparison>(move(l), move(r), IntegerComparison::Kind::LessThanEqual, type_ids.at("Bool")));
+            }
         }
+        return nullptr;
     }
     
     // Not
     if (ctx->NOT()) {
-        any e_res = visit(ctx->expr(0));
-        unique_ptr<Expr> e(any_cast<Expr*>(e_res));
+        auto e = visitExprAndAssertOk(ctx->expr(0));
         if (type_names[e->get_type()] != "Bool") {
-            errors.push_back("Argument of 'not' has type " + type_names[e->get_type()] + " instead of Bool.");
+            errors.push_back("Argument of boolean negation is not of type `Bool`, but of type `" + type_names[e->get_type()] + "`");
         }
-        return (Expr*)new BooleanNegation(move(e), type_ids.at("Bool"));
+        scratchpad.push(make_unique<BooleanNegation>(move(e), type_ids.at("Bool")));
+        return nullptr;
     }
     
     // Neg
     if (ctx->TILDE()) {
-        any e_res = visit(ctx->expr(0));
-        unique_ptr<Expr> e(any_cast<Expr*>(e_res));
+        auto e = visitExprAndAssertOk(ctx->expr(0));
         if (type_names[e->get_type()] != "Int") {
-            errors.push_back("Argument of '~' has type " + type_names[e->get_type()] + " instead of Int.");
+            errors.push_back("Argument of integer negation is not of type `Int`, but of type `" + type_names[e->get_type()] + "`");
         }
-        return (Expr*)new IntegerNegation(move(e), type_ids.at("Int"));
+        scratchpad.push(make_unique<IntegerNegation>(move(e), type_ids.at("Int")));
+        return nullptr;
     }
     
     // IsVoid
     if (ctx->ISVOID()) {
-        any e_res = visit(ctx->expr(0));
-        unique_ptr<Expr> e(any_cast<Expr*>(e_res));
-        return (Expr*)new IsVoid(move(e), type_ids.at("Bool"));
+        auto e = visitExprAndAssertOk(ctx->expr(0));
+        scratchpad.push(make_unique<IsVoid>(move(e), type_ids.at("Bool")));
+        return nullptr;
     }
     
     // Paren
     if (ctx->children.size() == 3 && ctx->children[0]->getText() == "(") {
-        any e_res = visit(ctx->expr(0));
-        unique_ptr<Expr> e(any_cast<Expr*>(e_res));
-        return (Expr*)new ParenthesizedExpr(move(e), e->get_type());
+        auto e = visitExprAndAssertOk(ctx->expr(0));
+        int type = e->get_type();
+        scratchpad.push(make_unique<ParenthesizedExpr>(move(e), type));
+        return nullptr;
     }
     
-    return (Expr*)new Expr(type_ids.at("Object")); // Fallback
+    scratchpad.push(make_unique<Expr>(type_ids.at("Object")));
+    return nullptr;
 }

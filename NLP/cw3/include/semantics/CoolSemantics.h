@@ -62,7 +62,7 @@ class CoolSemantics {
     // process.
     //
     // In case of errors, a list of error messages is returned.
-    std::expected<void *, std::vector<std::string>> run();
+    std::expected<TypedProgram, std::vector<std::string>> run();
 };
 
 #endif

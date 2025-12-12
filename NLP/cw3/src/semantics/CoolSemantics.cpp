@@ -14,9 +14,7 @@ using namespace std;
 string print_inheritance_loops_error(vector<vector<string>> inheritance_loops);
 
 // Runs semantic analysis and returns a list of errors, if any.
-//
-// TODO: change the type from void * to your typed AST type
-expected<void *, vector<string>> CoolSemantics::run() {
+expected<TypedProgram, vector<string>> CoolSemantics::run() {
     vector<string> errors;
 
     // collect classes
@@ -66,8 +64,9 @@ expected<void *, vector<string>> CoolSemantics::run() {
 
     // build inheritance graph
     // Check for undefined parents and inheritance from basic classes
-    for (auto& [name, info] : classes_) {
+    for (const auto& name : processing_order) {
         if (name == "Object") continue;
+        auto& info = classes_[name];
 
         if (!classes_.contains(info.parent)) {
             errors.push_back(name + " inherits from undefined class " + info.parent);
@@ -226,9 +225,8 @@ expected<void *, vector<string>> CoolSemantics::run() {
     type_names_.clear();
     int id_counter = 0;
     for (auto& [name, info] : classes_) {
-        type_ids_[name] = id_counter;
+        type_ids_[name] = id_counter++;
         type_names_.push_back(name);
-        id_counter++;
     }
     // Add SELF_TYPE
     type_ids_["SELF_TYPE"] = id_counter;
@@ -246,7 +244,7 @@ expected<void *, vector<string>> CoolSemantics::run() {
     }
 
     TypeChecker checker(classes_, type_ids_, type_names_);
-    for (const auto &error : checker.check(parser_)) {
+    for (const auto &error : checker.check(program)) {
         errors.push_back(error);
     }
 
@@ -255,7 +253,7 @@ expected<void *, vector<string>> CoolSemantics::run() {
     }
 
     // return the typed AST
-    return new TypedProgram(checker.getTypedProgram());
+    return checker.getTypedProgram();
 }
 
 string print_inheritance_loops_error(vector<vector<string>> inheritance_loops) {

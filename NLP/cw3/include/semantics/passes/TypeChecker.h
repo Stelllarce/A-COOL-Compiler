@@ -5,9 +5,11 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <memory>
 
 #include "CoolParser.h"
 #include "CoolParserBaseVisitor.h"
+#include "semantics/typed-ast/Expr.h"
 #include "semantics/CoolSemantics.h"
 
 class TypeChecker : public CoolParserBaseVisitor {
@@ -18,9 +20,9 @@ class TypeChecker : public CoolParserBaseVisitor {
     const std::map<std::string, int>& type_ids;
     const std::vector<std::string>& type_names;
     
-    // Symbol table for variables (scopes)
-    // Each scope maps variable name to type
     std::vector<std::map<std::string, std::string>> symbol_table;
+
+    std::stack<std::unique_ptr<Expr>> scratchpad;
     
     std::string current_class;
     
@@ -32,16 +34,19 @@ class TypeChecker : public CoolParserBaseVisitor {
     std::any visitMethod(CoolParser::MethodContext *ctx) override;
     std::any visitAttr(CoolParser::AttrContext *ctx) override;
     std::any visitFormal(CoolParser::FormalContext *ctx) override;
-    std::any visitExpr(CoolParser::ExprContext *ctx) override; // This might need to be split if ANTLR generates specific visit methods for labeled alternatives
+    std::any visitExpr(CoolParser::ExprContext *ctx) override;
 
     // define helper methods
     void enterScope();
     void exitScope();
     void addSymbol(std::string name, std::string type);
     std::string lookupSymbol(std::string name);
-    bool conform(std::string type1, std::string type2); // type1 <= type2
+    bool conform(std::string type1, std::string type2);
     std::string lub(std::string type1, std::string type2);
     std::string get_parent(std::string type);
+    
+    // Helper method for scratchpad pattern
+    std::unique_ptr<Expr> visitExprAndAssertOk(CoolParser::ExprContext *ctx);
 
   public:
     // TODO: add necessary dependencies to constructor
@@ -52,7 +57,7 @@ class TypeChecker : public CoolParserBaseVisitor {
 
     // Typechecks the AST that the parser produces and returns a list of errors,
     // if any.
-    std::vector<std::string> check(CoolParser *parser);
+    std::vector<std::string> check(CoolParser::ProgramContext *ctx);
     
     TypedProgram getTypedProgram() { return std::move(typed_program); }
 };
