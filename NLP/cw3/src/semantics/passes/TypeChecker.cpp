@@ -150,7 +150,9 @@ any TypeChecker::visitClass(CoolParser::ClassContext *ctx) {
     for (auto attr : ctx->attr()) {
         string name = attr->OBJECTID()->getText();
         string type = attr->TYPEID()->getText();
-        addSymbol(name, type);
+        if (type_ids.contains(type)) {
+            addSymbol(name, type);
+        }
 
         any res = visit(attr);
         if (res.has_value()) {
@@ -245,6 +247,10 @@ any TypeChecker::visitAttr(CoolParser::AttrContext *ctx) {
         errors.push_back("self cannot be the name of an attribute");
     }
     
+    if (!type_ids.contains(type)) {
+        return {};
+    }
+
     unique_ptr<Expr> init = nullptr;
     if (ctx->ASSIGN()) {
         init = visitExprAndAssertOk(ctx->expr());

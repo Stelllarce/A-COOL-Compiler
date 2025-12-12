@@ -164,12 +164,19 @@ expected<TypedProgram, vector<string>> CoolSemantics::run() {
 
         for (auto attr : info.ctx->attr()) {
             string aname = attr->OBJECTID()->getText();
+            string type = attr->TYPEID()->getText();
+
+            bool type_exists = classes_.contains(type) || type == "SELF_TYPE";
+            if (!type_exists) {
+                 errors.push_back("Attribute `" + aname + "` in class `" + name + "` declared to have type `" + type + "` which is undefined");
+                 continue;
+            }
+
             if (info.attributes.contains(aname)) {
                 errors.push_back("Attribute `" + aname + "` already defined for class `" + name + "`");
                 continue;
             }
             
-            string type = attr->TYPEID()->getText();
             info.attributes[aname] = {type, attr};
         }
     }
@@ -194,10 +201,18 @@ expected<TypedProgram, vector<string>> CoolSemantics::run() {
         // Check methods
         for (auto& [mname, minfo] : info.methods) {
             string curr = info.parent;
+            string earliest_mismatch_ancestor = "";
+
             while (curr != "" && classes_.contains(curr)) {
                 if (classes_[curr].methods.contains(mname)) {
                     // Check signature
                     auto& parent_method = classes_[curr].methods[mname];
+                    
+                    if (parent_method.error) {
+                        curr = classes_[curr].parent;
+                        continue;
+                    }
+
                     bool match = true;
                     if (minfo.return_type != parent_method.return_type) match = false;
                     if (minfo.arg_types.size() != parent_method.arg_types.size()) match = false;
@@ -211,11 +226,15 @@ expected<TypedProgram, vector<string>> CoolSemantics::run() {
                     }
                     
                     if (!match) {
-                        errors.push_back("Override for method " + mname + " in class " + name + " has different signature than method in ancestor " + curr + " (earliest ancestor that mismatches)");
+                        earliest_mismatch_ancestor = curr;
                     }
-                    break; // Found the nearest overridden method
                 }
                 curr = classes_[curr].parent;
+            }
+
+            if (!earliest_mismatch_ancestor.empty()) {
+                errors.push_back("Override for method " + mname + " in class " + name + " has different signature than method in ancestor " + earliest_mismatch_ancestor + " (earliest ancestor that mismatches)");
+                minfo.error = true;
             }
         }
     }

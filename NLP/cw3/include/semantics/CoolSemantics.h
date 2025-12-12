@@ -17,6 +17,7 @@ struct MethodInfo {
     std::string return_type;
     std::vector<std::string> arg_types;
     CoolParser::MethodContext* ctx;
+    bool error = false;
 };
 
 struct AttributeInfo {
