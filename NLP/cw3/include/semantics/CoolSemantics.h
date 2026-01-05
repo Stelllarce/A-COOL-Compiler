@@ -60,9 +60,8 @@ class CoolSemantics {
         : lexer_(lexer), parser_(parser) {}
 
     // Runs semantic analysis and returns the typed AST generated in the
-    // process.
-    //
-    // In case of errors, a list of error messages is returned.
+    // process
+    // In case of errors, a list of error messages is returned
     std::expected<TypedProgram, std::vector<std::string>> run();
 };
 

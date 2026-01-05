@@ -30,9 +30,66 @@
 
 using namespace std;
 
+string ErrorMessagePrinter::to_string() const {
+    if (holds_alternative<MethodError>(error)) {
+        MethodError err = get<MethodError>(error);
+        switch (err) {
+            case MethodError::SELF_PARAMETER_NAME: return "self cannot be the name of a formal parameter";
+            case MethodError::MULTIPLE_DEF: return "Formal parameter " + args[0] + " is multiply defined";
+            case MethodError::SELF_ARGUMENT_TYPE: return "Formal argument `" + args[0] + "` declared of type `SELF_TYPE` which is not allowed";
+            case MethodError::UNDEFINED_ARGUMENT_TYPE: return "Method `" + args[0] + "` in class `" + args[1] + "` declared to have an argument of type `" + args[2] + "` which is undefined";
+            case MethodError::UNDEFINED_RETURN_TYPE: return "Method `" + args[0] + "` in class `" + args[1] + "` declared to have return type `" + args[2] + "` which is undefined";
+            case MethodError::BODY_TYPE_MISMATCH: return "In class `" + args[0] + "` method `" + args[1] + "`: `" + args[2] + "` is not `" + args[3] + "`: type of method body is not a subtype of return type";
+        }
+    } else if (holds_alternative<AttrError>(error)) {
+        AttrError err = get<AttrError>(error);
+        switch (err) {
+            case AttrError::SELF_ATTR_NAME: return "self cannot be the name of an attribute";
+            case AttrError::BAD_SUBTYPE: return "In class `" + args[0] + "` attribute `" + args[1] + "`: `" + args[2] + "` is not `" + args[3] + "`: type of initialization expression is not a subtype of declared type";
+        }
+    } else if (holds_alternative<ExprError>(error)) {
+        ExprError err = get<ExprError>(error);
+        switch (err) {
+            case ExprError::OUT_OF_SCOPE: return "Variable named `" + args[0] + "` not in scope";
+            case ExprError::NO_SELF_ASSIGN: return "Cannot assign to 'self'.";
+            case ExprError::ASSIGNEE_OUT_SCOPE: return "Assignee named `" + args[0] + "` not in scope";
+            case ExprError::ASSIGNEE_NOT_SUBTYPE: return "In class `" + args[0] + "` assignee `" + args[1] + "`: `" + args[2] + "` is not `" + args[3] + "`: type of initialization expression is not a subtype of object type";
+            case ExprError::METHOD_NOT_DEFINED: return "Method `" + args[0] + "` not defined for type `" + args[1] + "` in " + args[2];
+            case ExprError::METHOD_BAD_ARGS_NUMBER: return "Method `" + args[0] + "` of type `" + args[1] + "` called with the wrong number of arguments; " + args[2] + " arguments expected, but " + args[3] + " provided";
+            case ExprError::METHOD_INVALID_CALL: return "Invalid call to method `" + args[0] + "` from class `" + args[1] + "`:";
+            case ExprError::ARGUMENT_HAS_WRONG_TYPE: return "  `" + args[0] + "` is not a subtype of `" + args[1] + "`: argument at position " + args[2] + " (0-indexed) has the wrong type";
+            case ExprError::INSTANTIATE_UKNOWN_CLASS: return "Attempting to instantiate unknown class `" + args[0] + "`";
+            case ExprError::IF_ELSE_NOT_BOOL: return "Type `" + args[0] + "` of if-then-else-fi condition is not `Bool`";
+            case ExprError::WHILE_NOT_BOOL: return "Type `" + args[0] + "` of while-loop-pool condition is not `Bool`";
+            case ExprError::LET_NO_SELF_ASSIGN: return "'self' cannot be bound in a 'let' expression.";
+            case ExprError::LET_NOT_SUBTYPE: return "Initializer for variable `" + args[0] + "` in let-in expression is of type `" + args[1] + "` which is not a subtype of the declared type `" + args[2] + "`";
+            case ExprError::LET_BAD_TYPE: return "Class `" + args[0] + "` of let-bound identifier `" + args[1] + "` is undefined";
+            case ExprError::CASE_SELF_TYPE: return "`" + args[0] + "` in case-of-esac declared to be of type `SELF_TYPE` which is not allowed";
+            case ExprError::CASE_UKNOWN_TYPE: return "Option `" + args[0] + "` in case-of-esac declared to have unknown type `" + args[1] + "`";
+            case ExprError::CASE_MULTIPLE_OPTIONS_TYPE: return "Multiple options match on type `" + args[0] + "`";
+            case ExprError::STATIC_TO_SELF: return "Static dispatch to SELF_TYPE.";
+            case ExprError::STATIC_UNDEFINED_TYPE: return "Undefined type `" + args[0] + "` in static method dispatch";
+            case ExprError::STAT_DISPATCH_BAD_TYPE: return "`" + args[0] + "` is not a subtype of `" + args[1] + "`";
+            case ExprError::OP_BAD_LEFT: return "Left-hand-side of arithmetic expression is not of type `Int`, but of type `" + args[0] + "`";
+            case ExprError::OP_BAD_RIGHT: return "Right-hand-side of arithmetic expression is not of type `Int`, but of type `" + args[0] + "`";
+            case ExprError::OP_BAD_COMPARE: return "A `" + args[0] + "` can only be compared to another `" + args[0] + "` and not to a `" + args[1] + "`";
+            case ExprError::CMP_BAD_LEFT: return "Left-hand-side of integer comparison is not of type `Int`, but of type `" + args[0] + "`";
+            case ExprError::CMP_BAD_RIGHT: return "Right-hand-side of integer comparison is not of type `Int`, but of type `" + args[0] + "`";
+            case ExprError::NOT_BAD_TYPE: return "Argument of boolean negation is not of type `Bool`, but of type `" + args[0] + "`";
+            case ExprError::TILDE_BAD_TYPE: return "Argument of integer negation is not of type `Int`, but of type `" + args[0] + "`";
+            default: return "Unknown error";
+        }
+    }
+    return "";
+}
+
 vector<string> TypeChecker::check(CoolParser::ProgramContext *ctx) {
     visit(ctx);
-    return errors;
+    vector<string> str_errors;
+    for (const auto& err : errors) {
+        str_errors.push_back(err.to_string());
+    }
+    return str_errors;
 }
 
 void TypeChecker::enterScope() {
@@ -110,7 +167,7 @@ string TypeChecker::lub(string type1, string type2) {
 unique_ptr<Expr> TypeChecker::visitExprAndAssertOk(CoolParser::ExprContext *ctx) {
     visitExpr(ctx);
     if (scratchpad.empty()) {
-        assert(false && "ICE: scratchpad is empty after visitExpr, but "
+        assert(false && "scratchpad is empty after visitExpr, but "
                "caller expects an Expr there");
     }
     auto expr = move(scratchpad.top());
@@ -138,7 +195,7 @@ any TypeChecker::visitClass(CoolParser::ClassContext *ctx) {
     enterScope();
     addSymbol("self", "SELF_TYPE");
     
-    // Add inherited attributes
+    // add inherited attributes
     string curr = parent;
     while (curr != "Object" && classes.contains(curr)) {
         for (auto const& [name, info] : classes.at(curr).attributes) {
@@ -197,16 +254,16 @@ any TypeChecker::visitMethod(CoolParser::MethodContext *ctx) {
         string name = formal->OBJECTID()->getText();
         string type = formal->TYPEID()->getText();
         if (name == "self") {
-            errors.push_back("self cannot be the name of a formal parameter");
+            errors.push_back(ErrorMessagePrinter(ErrorMessagePrinter::MethodError::SELF_PARAMETER_NAME));
         }
         if (symbol_table.back().contains(name)) {
-            errors.push_back("Formal parameter " + name + " is multiply defined");
+            errors.push_back(ErrorMessagePrinter(ErrorMessagePrinter::MethodError::MULTIPLE_DEF, {name}));
         }
         if (type == "SELF_TYPE") {
-             errors.push_back("Formal argument `" + name + "` declared of type `SELF_TYPE` which is not allowed");
+             errors.push_back(ErrorMessagePrinter(ErrorMessagePrinter::MethodError::SELF_ARGUMENT_TYPE, {name}));
              types_ok = false;
         } else if (!type_ids.contains(type)) {
-             errors.push_back("Method `" + method_name + "` in class `" + current_class + "` declared to have an argument of type `" + type + "` which is undefined");
+             errors.push_back(ErrorMessagePrinter(ErrorMessagePrinter::MethodError::UNDEFINED_ARGUMENT_TYPE, {method_name, current_class, type}));
              types_ok = false;
         }
         addSymbol(name, type);
@@ -216,7 +273,7 @@ any TypeChecker::visitMethod(CoolParser::MethodContext *ctx) {
     
     string return_type = ctx->TYPEID()->getText();
     if (!type_ids.contains(return_type)) {
-        errors.push_back("Method `" + method_name + "` in class `" + current_class + "` declared to have return type `" + return_type + "` which is undefined");
+        errors.push_back(ErrorMessagePrinter(ErrorMessagePrinter::MethodError::UNDEFINED_RETURN_TYPE, {method_name, current_class, return_type}));
         types_ok = false;
     }
 
@@ -231,7 +288,7 @@ any TypeChecker::visitMethod(CoolParser::MethodContext *ctx) {
     
     if (errors.size() == errors_before || body_type != "Object") {
         if (!conform(body_type, return_type)) {
-            errors.push_back("In class `" + current_class + "` method `" + method_name + "`: `" + body_type + "` is not `" + return_type + "`: type of method body is not a subtype of return type");
+            errors.push_back(ErrorMessagePrinter(ErrorMessagePrinter::MethodError::BODY_TYPE_MISMATCH, {current_class, method_name, body_type, return_type}));
         }
     }
     
@@ -252,7 +309,7 @@ any TypeChecker::visitAttr(CoolParser::AttrContext *ctx) {
     string type = ctx->TYPEID()->getText();
     
     if (name == "self") {
-        errors.push_back("self cannot be the name of an attribute");
+        errors.push_back(ErrorMessagePrinter(ErrorMessagePrinter::AttrError::SELF_ATTR_NAME));
     }
     
     if (!type_ids.contains(type)) {
@@ -267,7 +324,7 @@ any TypeChecker::visitAttr(CoolParser::AttrContext *ctx) {
         
         if (errors.size() == errors_before) {
             if (!conform(init_type, type)) {
-                errors.push_back("In class `" + current_class + "` attribute `" + name + "`: `" + init_type + "` is not `" + type + "`: type of initialization expression is not a subtype of declared type");
+                errors.push_back(ErrorMessagePrinter(ErrorMessagePrinter::AttrError::BAD_SUBTYPE, {current_class, name, init_type, type}));
             }
         }
     }
@@ -301,7 +358,7 @@ any TypeChecker::visitExpr(CoolParser::ExprContext *ctx) {
         string name = ctx->OBJECTID(0)->getText();
         string type = lookupSymbol(name);
         if (type == "") {
-            errors.push_back("Variable named `" + name + "` not in scope");
+            errors.push_back(ErrorMessagePrinter(ErrorMessagePrinter::ExprError::OUT_OF_SCOPE, {name}));
             type = "Object"; 
         }
         scratchpad.push(make_unique<ObjectReference>(name, type_ids.at(type)));
@@ -312,7 +369,7 @@ any TypeChecker::visitExpr(CoolParser::ExprContext *ctx) {
     if (ctx->ASSIGN()) {
         string name = ctx->OBJECTID(0)->getText();
         if (name == "self") {
-            errors.push_back("Cannot assign to 'self'.");
+            errors.push_back(ErrorMessagePrinter(ErrorMessagePrinter::ExprError::NO_SELF_ASSIGN));
         }
         
         auto val = visitExprAndAssertOk(ctx->expr(0));
@@ -320,41 +377,12 @@ any TypeChecker::visitExpr(CoolParser::ExprContext *ctx) {
         
         string var_type = lookupSymbol(name);
         if (var_type == "") {
-            errors.push_back("Assignee named `" + name + "` not in scope");
+            errors.push_back(ErrorMessagePrinter(ErrorMessagePrinter::ExprError::ASSIGNEE_OUT_SCOPE, {name}));
             var_type = "Object";
         } else {
-            // If we are in an attribute initialization, we might be assigning to the attribute itself.
-            // But wait, the attribute is already in the symbol table (we added it in visitClass).
-            // The issue in 048 is: bar : Int <- bar <- "hello";
-            // The inner assignment is bar <- "hello".
-            // bar is Int. "hello" is String.
-            // So inner assignment fails: String is not Int.
-            // The inner assignment returns String (type of "hello").
-            // The outer assignment is bar : Int <- (bar <- "hello").
-            // So it's initializing bar with the result of the inner assignment.
-            // The result of inner assignment is String.
-            // So outer initialization fails: String is not Int.
-            
-            // The expected output only shows ONE error:
-            // In class `Foo` assignee `bar`: `String` is not `Int`: type of initialization expression is not a subtype of object type
-            
-            // This corresponds to the inner assignment failure.
-            // The outer initialization failure (attribute init) seems to be suppressed or not reported?
-            // Or maybe the inner assignment returns the type of the variable being assigned to?
-            // No, assignment returns the value of the expression.
-            
-            // Let's check the manual.
-            // "The value of an assignment is the value of the expression on the right hand side."
-            
-            // So why is the second error not reported?
-            // Maybe because the inner expression already had an error?
-            // If we suppress cascading errors?
             
             if (!conform(val_type, var_type)) {
-                errors.push_back("In class `" + current_class + "` assignee `" + name + "`: `" + val_type + "` is not `" + var_type + "`: type of initialization expression is not a subtype of object type");
-                // On error, return the variable type to avoid cascading errors?
-                // In 082, this causes "Foo is not Bar" error because Foo (var type) !<= Bar (return type).
-                // In 048, this causes "Int is not Int" (valid) so no second error.
+                errors.push_back(ErrorMessagePrinter(ErrorMessagePrinter::ExprError::ASSIGNEE_NOT_SUBTYPE, {current_class, name, val_type, var_type}));
                 val_type = var_type;
             }
         }
@@ -395,16 +423,16 @@ any TypeChecker::visitExpr(CoolParser::ExprContext *ctx) {
         }
         
         if (!method_found) {
-            errors.push_back("Method `" + method_name + "` not defined for type `" + lookup_type + "` in dynamic dispatch");
+            errors.push_back(ErrorMessagePrinter(ErrorMessagePrinter::ExprError::METHOD_NOT_DEFINED, {method_name, lookup_type, "dynamic dispatch"}));
         } else {
             if (args.size() != formal_types.size()) {
-                errors.push_back("Method `" + method_name + "` of type `" + lookup_type + "` called with the wrong number of arguments; " + to_string(formal_types.size()) + " arguments expected, but " + to_string(args.size()) + " provided");
+                errors.push_back(ErrorMessagePrinter(ErrorMessagePrinter::ExprError::METHOD_BAD_ARGS_NUMBER, {method_name, lookup_type, to_string(formal_types.size()), to_string(args.size())}));
             } else {
                 for (size_t i = 0; i < args.size(); ++i) {
                     string arg_type = type_names[args[i]->get_type()];
                     if (!conform(arg_type, formal_types[i])) {
-                        errors.push_back("Invalid call to method `" + method_name + "` from class `" + lookup_type + "`:");
-                        errors.push_back("  `" + arg_type + "` is not a subtype of `" + formal_types[i] + "`: argument at position " + to_string(i) + " (0-indexed) has the wrong type");
+                        errors.push_back(ErrorMessagePrinter(ErrorMessagePrinter::ExprError::METHOD_INVALID_CALL, {method_name, lookup_type}));
+                        errors.push_back(ErrorMessagePrinter(ErrorMessagePrinter::ExprError::ARGUMENT_HAS_WRONG_TYPE, {arg_type, formal_types[i], to_string(i)}));
                     }
                 }
             }
@@ -427,7 +455,7 @@ any TypeChecker::visitExpr(CoolParser::ExprContext *ctx) {
     if (ctx->NEW()) {
         string type = ctx->TYPEID(0)->getText();
         if (type != "SELF_TYPE" && !classes.contains(type)) {
-            errors.push_back("Attempting to instantiate unknown class `" + type + "`");
+            errors.push_back(ErrorMessagePrinter(ErrorMessagePrinter::ExprError::INSTANTIATE_UKNOWN_CLASS, {type}));
             type = "Object";
         }
         scratchpad.push(make_unique<NewObject>(type_ids.at(type)));
@@ -439,7 +467,7 @@ any TypeChecker::visitExpr(CoolParser::ExprContext *ctx) {
         auto pred = visitExprAndAssertOk(ctx->expr(0));
         string pred_type = type_names[pred->get_type()];
         if (pred_type != "Bool") {
-            errors.push_back("Type `" + pred_type + "` of if-then-else-fi condition is not `Bool`");
+            errors.push_back(ErrorMessagePrinter(ErrorMessagePrinter::ExprError::IF_ELSE_NOT_BOOL, {pred_type}));
         }
         
         auto then_e = visitExprAndAssertOk(ctx->expr(1));
@@ -458,7 +486,7 @@ any TypeChecker::visitExpr(CoolParser::ExprContext *ctx) {
         auto pred = visitExprAndAssertOk(ctx->expr(0));
         string pred_type = type_names[pred->get_type()];
         if (pred_type != "Bool") {
-            errors.push_back("Type `" + pred_type + "` of while-loop-pool condition is not `Bool`");
+            errors.push_back(ErrorMessagePrinter(ErrorMessagePrinter::ExprError::WHILE_NOT_BOOL, {pred_type}));
         }
         
         auto body = visitExprAndAssertOk(ctx->expr(1));
@@ -488,10 +516,10 @@ any TypeChecker::visitExpr(CoolParser::ExprContext *ctx) {
             string name = v->OBJECTID()->getText();
             string type = v->TYPEID()->getText();
             if (name == "self") {
-                errors.push_back("'self' cannot be bound in a 'let' expression.");
+                errors.push_back(ErrorMessagePrinter(ErrorMessagePrinter::ExprError::LET_NO_SELF_ASSIGN));
             }
             if (type != "SELF_TYPE" && !classes.contains(type)) {
-                errors.push_back("Class `" + type + "` of let-bound identifier `" + name + "` is undefined");
+                errors.push_back(ErrorMessagePrinter(ErrorMessagePrinter::ExprError::LET_BAD_TYPE, {type, name}));
                 type = "Object";
             }
             
@@ -502,7 +530,7 @@ any TypeChecker::visitExpr(CoolParser::ExprContext *ctx) {
                 bool init_had_error = errors.size() > errors_before;
                 string init_type = type_names[init->get_type()];
                 if (!init_had_error && !conform(init_type, type)) {
-                    errors.push_back("Initializer for variable `" + name + "` in let-in expression is of type `" + init_type + "` which is not a subtype of the declared type `" + type + "`");
+                    errors.push_back(ErrorMessagePrinter(ErrorMessagePrinter::ExprError::LET_NOT_SUBTYPE, {name, init_type, type}));
                 }
             }
             
@@ -534,15 +562,15 @@ any TypeChecker::visitExpr(CoolParser::ExprContext *ctx) {
             bool type_ok = true;
             
             if (type == "SELF_TYPE") {
-                errors.push_back("`" + name + "` in case-of-esac declared to be of type `SELF_TYPE` which is not allowed");
+                errors.push_back(ErrorMessagePrinter(ErrorMessagePrinter::ExprError::CASE_SELF_TYPE, {name}));
                 type_ok = false;
             } else if (!classes.contains(type)) {
-                errors.push_back("Option `" + name + "` in case-of-esac declared to have unknown type `" + type + "`");
+                errors.push_back(ErrorMessagePrinter(ErrorMessagePrinter::ExprError::CASE_UKNOWN_TYPE, {name, type}));
                 type_ok = false;
             }
             
             if (branch_types.contains(type)) {
-                errors.push_back("Multiple options match on type `" + type + "`");
+                errors.push_back(ErrorMessagePrinter(ErrorMessagePrinter::ExprError::CASE_MULTIPLE_OPTIONS_TYPE, {type}));
             }
             branch_types.insert(type);
             
@@ -581,15 +609,15 @@ any TypeChecker::visitExpr(CoolParser::ExprContext *ctx) {
         if (ctx->AT()) {
             static_type = ctx->TYPEID(0)->getText();
             if (static_type == "SELF_TYPE") {
-                errors.push_back("Static dispatch to SELF_TYPE.");
+                errors.push_back(ErrorMessagePrinter(ErrorMessagePrinter::ExprError::STATIC_TO_SELF));
                 static_type = "Object";
                 static_type_error = true;
             } else if (!classes.contains(static_type)) {
-                errors.push_back("Undefined type `" + static_type + "` in static method dispatch");
+                errors.push_back(ErrorMessagePrinter(ErrorMessagePrinter::ExprError::STATIC_UNDEFINED_TYPE, {static_type}));
                 static_type = "Object";
                 static_type_error = true;
             } else if (!conform(target_type, static_type)) {
-                errors.push_back("`" + target_type + "` is not a subtype of `" + static_type + "`");
+                errors.push_back(ErrorMessagePrinter(ErrorMessagePrinter::ExprError::STAT_DISPATCH_BAD_TYPE, {target_type, static_type}));
             }
         }
         
@@ -621,20 +649,20 @@ any TypeChecker::visitExpr(CoolParser::ExprContext *ctx) {
         if (!method_found) {
             if (!target_had_error) {
                 if (ctx->AT()) {
-                    errors.push_back("Method `" + method_name + "` not defined for type `" + lookup_type + "` in static dispatch");
+                    errors.push_back(ErrorMessagePrinter(ErrorMessagePrinter::ExprError::METHOD_NOT_DEFINED, {method_name, lookup_type, "static dispatch"}));
                 } else {
-                    errors.push_back("Method `" + method_name + "` not defined for type `" + lookup_type + "` in dynamic dispatch");
+                    errors.push_back(ErrorMessagePrinter(ErrorMessagePrinter::ExprError::METHOD_NOT_DEFINED, {method_name, lookup_type, "dynamic dispatch"}));
                 }
             }
         } else {
             if (args.size() != formal_types.size()) {
-                errors.push_back("Method `" + method_name + "` of type `" + lookup_type + "` called with the wrong number of arguments; " + to_string(formal_types.size()) + " arguments expected, but " + to_string(args.size()) + " provided");
+                errors.push_back(ErrorMessagePrinter(ErrorMessagePrinter::ExprError::METHOD_BAD_ARGS_NUMBER, {method_name, lookup_type, to_string(formal_types.size()), to_string(args.size())}));
             } else {
                 for (size_t i = 0; i < args.size(); ++i) {
                     string arg_type = type_names[args[i]->get_type()];
                     if (!conform(arg_type, formal_types[i])) {
-                        errors.push_back("Invalid call to method `" + method_name + "` from class `" + lookup_type + "`:");
-                        errors.push_back("  `" + arg_type + "` is not a subtype of `" + formal_types[i] + "`: argument at position " + to_string(i) + " (0-indexed) has the wrong type");
+                        errors.push_back(ErrorMessagePrinter(ErrorMessagePrinter::ExprError::METHOD_INVALID_CALL, {method_name, lookup_type}));
+                        errors.push_back(ErrorMessagePrinter(ErrorMessagePrinter::ExprError::ARGUMENT_HAS_WRONG_TYPE, {arg_type, formal_types[i], to_string(i)}));
                     }
                 }
             }
@@ -666,10 +694,10 @@ any TypeChecker::visitExpr(CoolParser::ExprContext *ctx) {
         string r_type = type_names[r->get_type()];
         
         if (l_type != "Int") {
-            errors.push_back("Left-hand-side of arithmetic expression is not of type `Int`, but of type `" + l_type + "`");
+            errors.push_back(ErrorMessagePrinter(ErrorMessagePrinter::ExprError::OP_BAD_LEFT, {l_type}));
         }
         if (r_type != "Int") {
-            errors.push_back("Right-hand-side of arithmetic expression is not of type `Int`, but of type `" + r_type + "`");
+            errors.push_back(ErrorMessagePrinter(ErrorMessagePrinter::ExprError::OP_BAD_RIGHT, {r_type}));
         }
         
         Arithmetic::Kind op;
@@ -694,15 +722,15 @@ any TypeChecker::visitExpr(CoolParser::ExprContext *ctx) {
             if ((l_type == "Int" || l_type == "String" || l_type == "Bool" ||
                  r_type == "Int" || r_type == "String" || r_type == "Bool") &&
                 l_type != r_type) {
-                errors.push_back("A `" + l_type + "` can only be compared to another `" + l_type + "` and not to a `" + r_type + "`");
+                errors.push_back(ErrorMessagePrinter(ErrorMessagePrinter::ExprError::OP_BAD_COMPARE, {l_type, r_type}));
             }
             scratchpad.push(make_unique<EqualityComparison>(move(l), move(r), type_ids.at("Bool")));
         } else {
             if (l_type != "Int") {
-                errors.push_back("Left-hand-side of integer comparison is not of type `Int`, but of type `" + l_type + "`");
+                errors.push_back(ErrorMessagePrinter(ErrorMessagePrinter::ExprError::CMP_BAD_LEFT, {l_type}));
             }
             if (r_type != "Int") {
-                errors.push_back("Right-hand-side of integer comparison is not of type `Int`, but of type `" + r_type + "`");
+                errors.push_back(ErrorMessagePrinter(ErrorMessagePrinter::ExprError::CMP_BAD_RIGHT, {r_type}));
             }
             if (ctx->LT()) {
                 scratchpad.push(make_unique<IntegerComparison>(move(l), move(r), IntegerComparison::Kind::LessThan, type_ids.at("Bool")));
@@ -717,7 +745,7 @@ any TypeChecker::visitExpr(CoolParser::ExprContext *ctx) {
     if (ctx->NOT()) {
         auto e = visitExprAndAssertOk(ctx->expr(0));
         if (type_names[e->get_type()] != "Bool") {
-            errors.push_back("Argument of boolean negation is not of type `Bool`, but of type `" + type_names[e->get_type()] + "`");
+            errors.push_back(ErrorMessagePrinter(ErrorMessagePrinter::ExprError::NOT_BAD_TYPE, {type_names[e->get_type()]}));
         }
         scratchpad.push(make_unique<BooleanNegation>(move(e), type_ids.at("Bool")));
         return nullptr;
@@ -727,7 +755,7 @@ any TypeChecker::visitExpr(CoolParser::ExprContext *ctx) {
     if (ctx->TILDE()) {
         auto e = visitExprAndAssertOk(ctx->expr(0));
         if (type_names[e->get_type()] != "Int") {
-            errors.push_back("Argument of integer negation is not of type `Int`, but of type `" + type_names[e->get_type()] + "`");
+            errors.push_back(ErrorMessagePrinter(ErrorMessagePrinter::ExprError::TILDE_BAD_TYPE, {type_names[e->get_type()]}));
         }
         scratchpad.push(make_unique<IntegerNegation>(move(e), type_ids.at("Int")));
         return nullptr;

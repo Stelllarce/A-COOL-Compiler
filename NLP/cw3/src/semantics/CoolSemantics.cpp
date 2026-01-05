@@ -13,7 +13,6 @@ using namespace std;
 
 string print_inheritance_loops_error(vector<vector<string>> inheritance_loops);
 
-// Runs semantic analysis and returns a list of errors, if any.
 expected<TypedProgram, vector<string>> CoolSemantics::run() {
     vector<string> errors;
 
