@@ -295,21 +295,23 @@ void ExpressionGenerator::emit_static_dispatch(ostream& out, const StaticDispatc
 }
 
 void ExpressionGenerator::emit_dynamic_dispatch(ostream& out, const DynamicDispatch* expr) {
-    // Evaluate arguments in reverse order and push to stack
+    // Push control link (fp) (caller convention)
+    emit_push_register(out, FramePointer{});
+
+    // Evaluate and push arguments in reverse order
     auto args = expr->get_arguments();
     for (int i = (int)args.size() - 1; i >= 0; i--) {
         emit_expr(out, args[i]);
         emit_push_register(out, ArgumentRegister{0});
     }
-    
-    // Evaluate target object
+
+    // Evaluate target object (must happen after arguments)
+    // This ensures variable references use correct offsets from fp
+    // AND ensures a0 has the target for the dispatch
     emit_expr(out, expr->get_target());
     
-    // Check for void dispatch
-    emit_branch_equal_zero(out, ArgumentRegister{0}, "_dispatch_abort");
-    
-    // Push control link (fp)
-    emit_push_register(out, FramePointer{});
+    // Check for void dispatch (a0 still has target)
+    emit_branch_equal_zero(out, ArgumentRegister{0}, "_inf_loop");
     
     // Get dispatch table from object
     emit_load_word(out, TempRegister{0}, MemoryLocation{DISPATCH_TABLE_OFFSET, ArgumentRegister{0}});
@@ -368,16 +370,13 @@ void ExpressionGenerator::emit_new_object(ostream& out, const NewObject* expr) {
     
     // Load prototype object and copy it
     emit_load_address(out, ArgumentRegister{0}, type_name + "_protObj");
+    
+    emit_push_register(out, FramePointer{});
     emit_call(out, "Object.copy");
     
-    // Save the new object
-    emit_push_register(out, ArgumentRegister{0});
-    
     // Call the init method
+    emit_push_register(out, FramePointer{}); // Push FP before calling init
     emit_call(out, type_name + "_init");
-    
-    // Restore the object pointer
-    emit_pop_into_register(out, ArgumentRegister{0});
 }
 
 void ExpressionGenerator::emit_if_then_else(ostream& out, const IfThenElseFi* expr) {

@@ -22,9 +22,6 @@ void CoolCodegen::generate(ostream &out) {
     while_loop_pool_label_count = 0;
     case_of_esac_count = 0;
     
-    // Register empty string constant
-    register_string_constant("");
-    
     // ========================================================================
     // Text Section
     // ========================================================================
@@ -35,6 +32,11 @@ void CoolCodegen::generate(ostream &out) {
     emit_label(out, "_inf_loop");
     emit_jump(out, "_inf_loop");
     emit_empty_line(out);
+
+    // Dispatch abort (dispatch to void)
+    // emit_label(out, "_dispatch_abort");
+    // emit_jump(out, "_inf_loop");
+    // emit_empty_line(out);
     
     // Generate method implementations
     const auto& class_names = class_table_->get_class_names();
@@ -65,17 +67,20 @@ void CoolCodegen::generate(ostream &out) {
             emit_move(out, FramePointer{}, StackPointer{});
             emit_store_word(out, ReturnAddress{}, MemoryLocation{0, StackPointer{}});
             emit_grow_stack(out, 1);
+            emit_store_word(out, ArgumentRegister{0}, MemoryLocation{0, StackPointer{}});
+            emit_grow_stack(out, 1);
             
             // Set up local variable tracking
             // Arguments are on the stack: arg0 at fp+8, arg1 at fp+12, etc.
             map<string, int> local_var_offsets;
-            int next_local_offset = -8; // After ra on stack
+            int next_local_offset = -8;
             
-            for (int j = 0; j < (int)arg_names.size(); j++) {
-                // Arguments pushed by caller, after control link
-                // Stack: [Old FP] [ArgN] ... [Arg0] [RA] (FP points to RA)
-                // So Arg0 is at 4(FP), Arg1 at 8(FP) etc.
-                local_var_offsets[arg_names[j]] = 4 + j * WORD_SIZE;
+            int n_args = (int)arg_names.size();
+            for (int j = 0; j < n_args; j++) {
+                // User instruction: 4*(n-i)(fp) is arg i
+                // Arg 0 is at offset 4*n
+                // Arg n-1 is at offset 4
+                local_var_offsets[arg_names[j]] = (n_args - j) * WORD_SIZE;
             }
             
             // Generate body code
@@ -84,9 +89,13 @@ void CoolCodegen::generate(ostream &out) {
             
             // Method epilogue: restore state and return
             emit_load_word(out, ReturnAddress{}, MemoryLocation{0, FramePointer{}});
+            
             // Pop: ra slot (4) + control link (4) + arguments
-            emit_add_immediate(out, StackPointer{}, StackPointer{}, 4 + 4 + (int)arg_names.size() * WORD_SIZE);
-            emit_load_word(out, FramePointer{}, MemoryLocation{0, StackPointer{}});
+            // Old FP is at 4*n + 4 (fp)
+            // Restore SP to FP + 4*n + 8
+            emit_add_immediate(out, StackPointer{}, FramePointer{}, (arg_names.size() * WORD_SIZE) + 8);
+            emit_load_word(out, FramePointer{}, MemoryLocation{-4, StackPointer{}});
+            
             emit_ident(out);
             out << "ret" << endl;
             emit_empty_line(out);
