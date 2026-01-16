@@ -58,14 +58,14 @@ class ExpressionGenerator {
 private:
     ClassTable* class_table_;
     int current_class_index_;
-    std::map<std::string, int>* local_var_offsets_;  // offset from fp (negative)
-    int* next_local_offset_;
+    std::map<std::string, int> local_var_offsets_;
+    int next_local_offset_;
 
 public:
     ExpressionGenerator(ClassTable* class_table, int current_class_index,
-                        std::map<std::string, int>* local_var_offsets, int* next_local_offset)
+                        std::map<std::string, int> local_var_offsets, int next_local_offset)
         : class_table_(class_table), current_class_index_(current_class_index),
-          local_var_offsets_(local_var_offsets), next_local_offset_(next_local_offset) {}
+          local_var_offsets_(std::move(local_var_offsets)), next_local_offset_(next_local_offset) {}
 
     void emit_expr(std::ostream& out, const Expr* expr);
 

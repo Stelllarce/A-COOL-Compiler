@@ -226,7 +226,6 @@ void ExpressionGenerator::emit_expr(ostream& out, const Expr* expr) {
 }
 
 void ExpressionGenerator::emit_int_constant(ostream& out, const IntConstant* expr) {
-    // Load integer value into a0
     int id = register_int_constant(expr->get_value());
     emit_load_address(out, TempRegister{0}, "_int" + to_string(id));
     emit_push_register(out, TempRegister{0});
@@ -234,14 +233,12 @@ void ExpressionGenerator::emit_int_constant(ostream& out, const IntConstant* exp
 }
 
 void ExpressionGenerator::emit_string_constant(ostream& out, const StringConstant* expr) {
-    // Register the string constant and load its address
     int id = register_string_constant(expr->get_value());
     emit_load_address(out, TempRegister{0}, "_string" + to_string(id) + ".content");
     emit_move(out, ArgumentRegister{0}, TempRegister{0});
 }
 
 void ExpressionGenerator::emit_bool_constant(ostream& out, const BoolConstant* expr) {
-    // Load boolean value into a0 (1 for true, 0 for false)
     emit_ident(out);
     out << "li a0, " << (expr->get_value() ? 1 : 0) << endl;
 }
@@ -257,8 +254,8 @@ void ExpressionGenerator::emit_object_reference(ostream& out, const ObjectRefere
     }
     
     // Check if it's a local variable or argument
-    auto it = local_var_offsets_->find(name);
-    if (it != local_var_offsets_->end()) {
+    auto it = local_var_offsets_.find(name);
+    if (it != local_var_offsets_.end()) {
         emit_load_word(out, ArgumentRegister{0}, MemoryLocation{it->second, FramePointer{}});
         return;
     }
@@ -289,7 +286,6 @@ void ExpressionGenerator::emit_static_dispatch(ostream& out, const StaticDispatc
     
     // Evaluate and push arguments in reverse order
     for (int i = (int)args.size() - 1; i >= 0; i--) {
-        // Optimization: For StringConstant and IntConstant, load directly to t0 and push, avoiding a0 clobbering
         if (auto sc = dynamic_cast<const StringConstant*>(args[i])) {
             int id = register_string_constant(sc->get_value());
             emit_load_address(out, TempRegister{0}, "_string" + to_string(id) + ".content");
@@ -310,18 +306,13 @@ void ExpressionGenerator::emit_static_dispatch(ostream& out, const StaticDispatc
         emit_pop_into_register(out, ArgumentRegister{0});
         emit_push_register(out, TempRegister{0});
     }
-    
-    // a0 still has the target object
-    
+        
     // Call the method using static dispatch
     int dispatch_type = expr->get_static_dispatch_type();
     string class_name(class_table_->get_name(dispatch_type));
     string method_name = expr->get_method_name();
     
     emit_jump_and_link(out, class_name + "." + method_name);
-    
-    // Callee restores fp and cleans up stack (control link + arguments)
-    // No action needed here
 }
 
 void ExpressionGenerator::emit_dynamic_dispatch(ostream& out, const DynamicDispatch* expr) {
@@ -335,9 +326,6 @@ void ExpressionGenerator::emit_dynamic_dispatch(ostream& out, const DynamicDispa
         emit_push_register(out, ArgumentRegister{0});
     }
 
-    // Evaluate target object (must happen after arguments)
-    // This ensures variable references use correct offsets from fp
-    // AND ensures a0 has the target for the dispatch
     emit_expr(out, expr->get_target());
     
     // Check for void dispatch (a0 still has target)
@@ -354,9 +342,6 @@ void ExpressionGenerator::emit_dynamic_dispatch(ostream& out, const DynamicDispa
     // Load method address and jump
     emit_load_word(out, TempRegister{0}, MemoryLocation{method_offset, TempRegister{0}});
     emit_jump_and_link_register(out, TempRegister{0});
-    
-    // Callee restores fp and cleans up stack
-    // No action needed here
 }
 
 void ExpressionGenerator::emit_sequence(ostream& out, const Sequence* expr) {
@@ -374,8 +359,8 @@ void ExpressionGenerator::emit_assignment(ostream& out, const Assignment* expr) 
     emit_expr(out, expr->get_value());
     
     // Check if it's a local variable
-    auto it = local_var_offsets_->find(name);
-    if (it != local_var_offsets_->end()) {
+    auto it = local_var_offsets_.find(name);
+    if (it != local_var_offsets_.end()) {
         emit_store_word(out, ArgumentRegister{0}, MemoryLocation{it->second, FramePointer{}});
         return;
     }
@@ -484,9 +469,9 @@ void ExpressionGenerator::emit_let_in(ostream& out, const LetIn* expr) {
         emit_push_register(out, ArgumentRegister{0});
         
         // Record the variable offset
-        int offset = *next_local_offset_;
-        *next_local_offset_ -= WORD_SIZE;
-        (*local_var_offsets_)[var_name] = offset;
+        int offset = next_local_offset_;
+        next_local_offset_ -= WORD_SIZE;
+        local_var_offsets_[var_name] = offset;
         var_names.push_back(var_name);
         var_offsets.push_back(offset);
     }
@@ -496,7 +481,7 @@ void ExpressionGenerator::emit_let_in(ostream& out, const LetIn* expr) {
     
     // Clean up variables
     for (const auto& name : var_names) {
-        local_var_offsets_->erase(name);
+        local_var_offsets_.erase(name);
     }
     
     // Restore stack and preserve result (a0)
@@ -508,7 +493,7 @@ void ExpressionGenerator::emit_let_in(ostream& out, const LetIn* expr) {
     // Pop variables
     int num_vars = (int)vardecls.size();
     emit_add_immediate(out, StackPointer{}, StackPointer{}, num_vars * WORD_SIZE);
-    *next_local_offset_ += num_vars * WORD_SIZE;
+    next_local_offset_ += num_vars * WORD_SIZE;
     
     // Push result (t0)
     emit_push_register(out, TempRegister{0});
@@ -566,13 +551,11 @@ void ExpressionGenerator::emit_integer_comparison(ostream& out, const IntegerCom
     // Pop left operand
     emit_pop_into_register(out, TempRegister{0});
     
-    // Compare: use slt for less than
     switch (expr->get_kind()) {
         case IntegerComparison::Kind::LessThan:
             emit_set_less_than(out, ArgumentRegister{0}, TempRegister{0}, TempRegister{1});
             break;
         case IntegerComparison::Kind::LessThanEqual:
-            // a <= b is equivalent to !(b < a)
             emit_set_less_than(out, ArgumentRegister{0}, TempRegister{1}, TempRegister{0});
             emit_xor_immediate(out, ArgumentRegister{0}, ArgumentRegister{0}, 1);
             break;
@@ -627,7 +610,7 @@ void ExpressionGenerator::emit_case_of_esac(ostream& out, const CaseOfEsac* expr
     // Save expression result
     emit_push_register(out, ArgumentRegister{0});
     
-    // Try each branch (sorted by specificity in the AST)
+    // Try each branch
     const auto& cases = expr->get_cases();
     for (size_t i = 0; i < cases.size(); i++) {
         string branch_label = "_case_branch_" + to_string(label_id) + "_" + to_string(i);
@@ -645,18 +628,18 @@ void ExpressionGenerator::emit_case_of_esac(ostream& out, const CaseOfEsac* expr
         
         // Match found - bind variable and evaluate body
         const string& var_name = cases[i].get_name();
-        int offset = *next_local_offset_;
-        *next_local_offset_ -= WORD_SIZE;
+        int offset = next_local_offset_;
+        next_local_offset_ -= WORD_SIZE;
         
         emit_load_word(out, ArgumentRegister{0}, MemoryLocation{0, StackPointer{}});
         emit_push_register(out, ArgumentRegister{0});
-        (*local_var_offsets_)[var_name] = offset;
+        local_var_offsets_[var_name] = offset;
         
         emit_expr(out, cases[i].get_expr());
         
-        local_var_offsets_->erase(var_name);
+        local_var_offsets_.erase(var_name);
         emit_add_immediate(out, StackPointer{}, StackPointer{}, WORD_SIZE);
-        *next_local_offset_ += WORD_SIZE;
+        next_local_offset_ += WORD_SIZE;
         
         emit_jump(out, end_label);
     }
@@ -675,7 +658,6 @@ void ExpressionGenerator::emit_method_invocation(ostream& out, const MethodInvoc
     // Evaluate and push arguments in reverse order
     auto args = expr->get_arguments();
     for (int i = (int)args.size() - 1; i >= 0; i--) {
-        // Optimization: For StringConstant and IntConstant, load directly to t0 and push
         if (auto sc = dynamic_cast<const StringConstant*>(args[i])) {
             int id = register_string_constant(sc->get_value());
             emit_load_address(out, TempRegister{0}, "_string" + to_string(id) + ".content");
@@ -693,10 +675,10 @@ void ExpressionGenerator::emit_method_invocation(ostream& out, const MethodInvoc
         emit_push_register(out, ArgumentRegister{0});
     }
 
-    // Target is 'self', which is available in a0 (if it was passed) OR we load it from where we saved it.
+    // Target is self, which is available in a0 or we load it from where we saved it.
     // In method prologue, we saved a0 (self) at offsets from fp.
     // We need to load self into a0 for the dispatch.
-    // self is stored at -4(fp) according to our new convention (verified in emit_object_reference change).
+    // self is stored at -4(fp)
     emit_load_word(out, ArgumentRegister{0}, MemoryLocation{-4, FramePointer{}});
     
     // Check for void dispatch (self shouldn't be void, but for consistency)
@@ -704,14 +686,6 @@ void ExpressionGenerator::emit_method_invocation(ostream& out, const MethodInvoc
     
     // Get dispatch table from object
     emit_load_word(out, TempRegister{0}, MemoryLocation{DISPATCH_TABLE_OFFSET, ArgumentRegister{0}});
-    
-    // Get method index from target type
-    // Since target is self, type is current_class_index_? No, runtime type is in object.
-    // But we need the offset from the type of the expression 'self', which is current_class_index_.
-    // Wait, MethodInvocation is on implicit self.
-    // The method lookup should be based on the class where the method is defined?
-    // In Cool, dispatch is based on the static type of the object for slot number, but dynamic dispatch table.
-    // Static type of self is current class.
     
     int method_index = class_table_->get_method_index(current_class_index_, expr->get_method_name());
     int method_offset = method_index * WORD_SIZE;

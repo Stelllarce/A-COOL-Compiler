@@ -32,11 +32,6 @@ void CoolCodegen::generate(ostream &out) {
     emit_label(out, "_inf_loop");
     emit_jump(out, "_inf_loop");
     emit_empty_line(out);
-
-    // Dispatch abort (dispatch to void)
-    // emit_label(out, "_dispatch_abort");
-    // emit_jump(out, "_inf_loop");
-    // emit_empty_line(out);
     
     // Generate method implementations
     const auto& class_names = class_table_->get_class_names();
@@ -71,20 +66,16 @@ void CoolCodegen::generate(ostream &out) {
             emit_grow_stack(out, 1);
             
             // Set up local variable tracking
-            // Arguments are on the stack: arg0 at fp+8, arg1 at fp+12, etc.
             map<string, int> local_var_offsets;
             int next_local_offset = -8;
             
             int n_args = (int)arg_names.size();
             for (int j = 0; j < n_args; j++) {
-                // User instruction: 4*(n-i)(fp) is arg i
-                // Arg 0 is at offset 4*n
-                // Arg n-1 is at offset 4
                 local_var_offsets[arg_names[j]] = (n_args - j) * WORD_SIZE;
             }
             
             // Generate body code
-            ExpressionGenerator expr_gen(class_table_.get(), i, &local_var_offsets, &next_local_offset);
+            ExpressionGenerator expr_gen(class_table_.get(), i, local_var_offsets, next_local_offset);
             expr_gen.emit_expr(out, body);
             
             // Method epilogue: restore state and return
@@ -203,37 +194,6 @@ void CoolCodegen::generate(ostream &out) {
         
         emit_globl(out, class_name + "_init");
         emit_label(out, class_name + "_init");
-
-        // if (class_name == "String") {
-        //     // String_init special case
-        //     emit_move(out, FramePointer{}, StackPointer{});
-        //     emit_store_word(out, ReturnAddress{}, MemoryLocation{0, StackPointer{}});
-        //     emit_grow_stack(out, 1);
-            
-        //     emit_store_word(out, SavedRegister{1}, MemoryLocation{0, StackPointer{}});
-        //     emit_grow_stack(out, 1);
-        //     emit_add(out, SavedRegister{1}, ArgumentRegister{0}, ZeroRegister{});
-            
-        //     emit_load_address(out, ArgumentRegister{0}, "Int_protObj");
-        //     emit_store_word(out, FramePointer{}, MemoryLocation{0, StackPointer{}});
-        //     emit_grow_stack(out, 1);
-            
-        //     emit_call(out, "Object.copy");
-            
-        //     emit_store_word(out, ArgumentRegister{0}, MemoryLocation{12, SavedRegister{1}});
-            
-        //     emit_add(out, ArgumentRegister{0}, SavedRegister{1}, ZeroRegister{});
-            
-        //     emit_grow_stack(out, -1);
-        //     emit_load_word(out, SavedRegister{1}, MemoryLocation{0, StackPointer{}});
-        //     emit_load_word(out, ReturnAddress{}, MemoryLocation{0, FramePointer{}});
-        //     emit_add_immediate(out, StackPointer{}, StackPointer{}, 8);
-        //     emit_load_word(out, FramePointer{}, MemoryLocation{0, StackPointer{}});
-        //     emit_ident(out);
-        //     out << "ret" << endl;
-        //     emit_empty_line(out);
-        //     continue;
-        // }
         
         emit_move(out, FramePointer{}, StackPointer{});
         emit_store_word(out, ReturnAddress{}, MemoryLocation{0, StackPointer{}});
@@ -282,19 +242,18 @@ void CoolCodegen::generate(ostream &out) {
             string parent_name(class_table_->get_name(parent));
             emit_push_register(out, FramePointer{});
             emit_call(out, parent_name + "_init");
-            // Callee pops Control Link (FP)
         }
         
         // Initialize attributes with their initializers
-        auto attrs = class_table_->get_attributes(i);  // Only this class's attrs
-        auto all_attrs = class_table_->get_all_attributes(i);  // Including inherited
+        auto attrs = class_table_->get_attributes(i);
+        auto all_attrs = class_table_->get_all_attributes(i);
         
         for (const auto& attr_name : attrs) {
             const Expr* init = class_table_->transitive_get_attribute_initializer(class_name, attr_name);
             if (init) {
                 map<string, int> local_var_offsets;
                 int next_local_offset = -12;
-                ExpressionGenerator expr_gen(class_table_.get(), i, &local_var_offsets, &next_local_offset);
+                ExpressionGenerator expr_gen(class_table_.get(), i, local_var_offsets, next_local_offset);
                 expr_gen.emit_expr(out, init);
                 
                 // Find attribute offset in object
