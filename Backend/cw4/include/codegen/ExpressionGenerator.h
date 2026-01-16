@@ -28,6 +28,7 @@ class EqualityComparison;
 class BooleanNegation;
 class IsVoid;
 class ParenthesizedExpr;
+class MethodInvocation;
 class CaseOfEsac;
 
 // Constants for object layout
@@ -50,6 +51,8 @@ std::string escape_string(const std::string& s);
 int compute_string_length(const std::string& s);
 void reset_string_constants();
 const std::map<std::string, int>& get_string_constants();
+
+const std::map<int, int>& get_int_constants();
 
 class ExpressionGenerator {
 private:
@@ -86,6 +89,7 @@ private:
     void emit_boolean_negation(std::ostream& out, const BooleanNegation* expr);
     void emit_is_void(std::ostream& out, const IsVoid* expr);
     void emit_parenthesized(std::ostream& out, const ParenthesizedExpr* expr);
+    void emit_method_invocation(std::ostream& out, const MethodInvocation* expr);
     void emit_case_of_esac(std::ostream& out, const CaseOfEsac* expr);
 };
 

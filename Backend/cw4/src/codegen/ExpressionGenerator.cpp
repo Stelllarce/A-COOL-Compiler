@@ -16,6 +16,7 @@
 #include "semantics/typed-ast/IntegerNegation.h"
 #include "semantics/typed-ast/IsVoid.h"
 #include "semantics/typed-ast/LetIn.h"
+#include "semantics/typed-ast/MethodInvocation.h"
 #include "semantics/typed-ast/NewObject.h"
 #include "semantics/typed-ast/ObjectReference.h"
 #include "semantics/typed-ast/ParenthesizedExpr.h"
@@ -39,13 +40,22 @@ using namespace riscv_emit;
 static map<string, int> string_constants;
 static int string_constant_counter = 0;
 
+static map<int, int> int_constants;
+static int int_constant_counter = 0;
+
 void reset_string_constants() {
     string_constants.clear();
     string_constant_counter = 0;
+    int_constants.clear();
+    int_constant_counter = 0;
 }
 
 const map<string, int>& get_string_constants() {
     return string_constants;
+}
+
+const map<int, int>& get_int_constants() {
+    return int_constants;
 }
 
 int register_string_constant(const string& value) {
@@ -55,6 +65,16 @@ int register_string_constant(const string& value) {
     }
     int id = ++string_constant_counter;
     string_constants[value] = id;
+    return id;
+}
+
+int register_int_constant(int value) {
+    auto it = int_constants.find(value);
+    if (it != int_constants.end()) {
+        return it->second;
+    }
+    int id = ++int_constant_counter;
+    int_constants[value] = id;
     return id;
 }
 
@@ -197,15 +217,20 @@ void ExpressionGenerator::emit_expr(ostream& out, const Expr* expr) {
     if (auto coe = dynamic_cast<const CaseOfEsac*>(expr)) {
         return emit_case_of_esac(out, coe);
     }
+    if (auto mi = dynamic_cast<const MethodInvocation*>(expr)) {
+        return emit_method_invocation(out, mi);
+    }
     
-    cerr << "ICE: unhandled expression type" << endl;
+    cerr << "ICE: unhandled expression type: " << typeid(*expr).name() << endl;
     abort();
 }
 
 void ExpressionGenerator::emit_int_constant(ostream& out, const IntConstant* expr) {
     // Load integer value into a0
-    emit_ident(out);
-    out << "li a0, " << expr->get_value() << endl;
+    int id = register_int_constant(expr->get_value());
+    emit_load_address(out, TempRegister{0}, "_int" + to_string(id));
+    emit_push_register(out, TempRegister{0});
+    emit_pop_into_register(out, ArgumentRegister{0});
 }
 
 void ExpressionGenerator::emit_string_constant(ostream& out, const StringConstant* expr) {
@@ -225,10 +250,9 @@ void ExpressionGenerator::emit_object_reference(ostream& out, const ObjectRefere
     const string& name = expr->get_name();
     
     if (name == "self") {
-        // self is in a0 at method entry - if we need to preserve it across calls,
-        // caller is responsible
-        // For now, assume self is still in a0 (works for simple cases)
-        // No-op since result should be in a0
+        emit_load_word(out, TempRegister{0}, MemoryLocation{-4, FramePointer{}});
+        emit_push_register(out, TempRegister{0});
+        emit_pop_into_register(out, ArgumentRegister{0});
         return;
     }
     
@@ -265,10 +289,16 @@ void ExpressionGenerator::emit_static_dispatch(ostream& out, const StaticDispatc
     
     // Evaluate and push arguments in reverse order
     for (int i = (int)args.size() - 1; i >= 0; i--) {
-        // Optimization: For StringConstant, load directly to t0 and push, avoiding a0 clobbering
+        // Optimization: For StringConstant and IntConstant, load directly to t0 and push, avoiding a0 clobbering
         if (auto sc = dynamic_cast<const StringConstant*>(args[i])) {
             int id = register_string_constant(sc->get_value());
             emit_load_address(out, TempRegister{0}, "_string" + to_string(id) + ".content");
+            emit_push_register(out, TempRegister{0});
+            continue;
+        }
+        if (auto ic = dynamic_cast<const IntConstant*>(args[i])) {
+            int id = register_int_constant(ic->get_value());
+            emit_load_address(out, TempRegister{0}, "_int" + to_string(id));
             emit_push_register(out, TempRegister{0});
             continue;
         }
@@ -437,21 +467,16 @@ void ExpressionGenerator::emit_let_in(ostream& out, const LetIn* expr) {
         } else {
             // Default initialization based on type
             string type_name(class_table_->get_name(var_type));
-            if (type_name == "Int") {
-                emit_ident(out);
-                out << "li a0, 0" << endl;
-            } else if (type_name == "Bool") {
-                emit_ident(out);
-                out << "li a0, 0" << endl;
-            } else if (type_name == "String") {
-                // For String, we need to load an empty string
-                int id = register_string_constant("");
-                emit_load_address(out, TempRegister{0}, "_string" + to_string(id) + ".content");
-                emit_move(out, ArgumentRegister{0}, TempRegister{0});
+            if (type_name == "Int" || type_name == "Bool" || type_name == "String") {
+                emit_load_address(out, ArgumentRegister{0}, type_name + "_protObj");
+                emit_push_register(out, FramePointer{});
+                emit_call(out, "Object.copy");
+                emit_push_register(out, FramePointer{});
+                emit_call(out, type_name + "_init");
             } else {
                 // void/null for reference types
                 emit_ident(out);
-                out << "li a0, 0" << endl;
+                emit_load_immediate(out, ArgumentRegister{0}, 0);
             }
         }
         
@@ -474,10 +499,21 @@ void ExpressionGenerator::emit_let_in(ostream& out, const LetIn* expr) {
         local_var_offsets_->erase(name);
     }
     
-    // Restore stack
+    // Restore stack and preserve result (a0)
+    // Push result
+    emit_push_register(out, ArgumentRegister{0});
+    // Pop result into t0
+    emit_pop_into_register(out, TempRegister{0});
+    
+    // Pop variables
     int num_vars = (int)vardecls.size();
     emit_add_immediate(out, StackPointer{}, StackPointer{}, num_vars * WORD_SIZE);
     *next_local_offset_ += num_vars * WORD_SIZE;
+    
+    // Push result (t0)
+    emit_push_register(out, TempRegister{0});
+    // Pop result into a0
+    emit_pop_into_register(out, ArgumentRegister{0});
 }
 
 void ExpressionGenerator::emit_arithmetic(ostream& out, const Arithmetic* expr) {
@@ -632,4 +668,55 @@ void ExpressionGenerator::emit_case_of_esac(ostream& out, const CaseOfEsac* expr
     // Clean up saved expression
     emit_add_immediate(out, StackPointer{}, StackPointer{}, WORD_SIZE);
 }
+void ExpressionGenerator::emit_method_invocation(ostream& out, const MethodInvocation* expr) {
+    // Push control link (fp) (caller convention)
+    emit_push_register(out, FramePointer{});
 
+    // Evaluate and push arguments in reverse order
+    auto args = expr->get_arguments();
+    for (int i = (int)args.size() - 1; i >= 0; i--) {
+        // Optimization: For StringConstant and IntConstant, load directly to t0 and push
+        if (auto sc = dynamic_cast<const StringConstant*>(args[i])) {
+            int id = register_string_constant(sc->get_value());
+            emit_load_address(out, TempRegister{0}, "_string" + to_string(id) + ".content");
+            emit_push_register(out, TempRegister{0});
+            continue;
+        }
+        if (auto ic = dynamic_cast<const IntConstant*>(args[i])) {
+            int id = register_int_constant(ic->get_value());
+            emit_load_address(out, TempRegister{0}, "_int" + to_string(id));
+            emit_push_register(out, TempRegister{0});
+            continue;
+        }
+
+        emit_expr(out, args[i]);
+        emit_push_register(out, ArgumentRegister{0});
+    }
+
+    // Target is 'self', which is available in a0 (if it was passed) OR we load it from where we saved it.
+    // In method prologue, we saved a0 (self) at offsets from fp.
+    // We need to load self into a0 for the dispatch.
+    // self is stored at -4(fp) according to our new convention (verified in emit_object_reference change).
+    emit_load_word(out, ArgumentRegister{0}, MemoryLocation{-4, FramePointer{}});
+    
+    // Check for void dispatch (self shouldn't be void, but for consistency)
+    emit_branch_equal_zero(out, ArgumentRegister{0}, "_inf_loop");
+    
+    // Get dispatch table from object
+    emit_load_word(out, TempRegister{0}, MemoryLocation{DISPATCH_TABLE_OFFSET, ArgumentRegister{0}});
+    
+    // Get method index from target type
+    // Since target is self, type is current_class_index_? No, runtime type is in object.
+    // But we need the offset from the type of the expression 'self', which is current_class_index_.
+    // Wait, MethodInvocation is on implicit self.
+    // The method lookup should be based on the class where the method is defined?
+    // In Cool, dispatch is based on the static type of the object for slot number, but dynamic dispatch table.
+    // Static type of self is current class.
+    
+    int method_index = class_table_->get_method_index(current_class_index_, expr->get_method_name());
+    int method_offset = method_index * WORD_SIZE;
+    
+    // Load method address and jump
+    emit_load_word(out, TempRegister{0}, MemoryLocation{method_offset, TempRegister{0}});
+    emit_jump_and_link_register(out, TempRegister{0});
+}

@@ -340,7 +340,7 @@ void CoolCodegen::generate(ostream &out) {
         emit_label(out, label + ".length");
         emit_word(out, class_table_->get_index("Int"), "class tag for Int");
         emit_word(out, 4, "object size");
-        emit_word(out, 0, "dispatch table");
+        emit_word(out, "Int_dispTab");
         emit_word(out, actual_len, "value");
         emit_empty_line(out);
         
@@ -360,6 +360,21 @@ void CoolCodegen::generate(ostream &out) {
             emit_ident(out);
             out << ".byte 0" << endl;
         }
+        emit_empty_line(out);
+    }
+    
+    // Int constants
+    emit_header_comment(out, "Int constants");
+    
+    for (const auto& [val, id] : get_int_constants()) {
+        string label = "_int" + to_string(id);
+        
+        emit_gc_tag(out);
+        emit_label(out, label);
+        emit_word(out, class_table_->get_index("Int"), "class tag for Int");
+        emit_word(out, 4, "object size");
+        emit_word(out, "Int_dispTab");
+        emit_word(out, val, "value");
         emit_empty_line(out);
     }
     
