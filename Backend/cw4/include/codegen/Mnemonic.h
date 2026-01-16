@@ -14,6 +14,7 @@ enum class Mnemonic {
     StoreWord,
     LoadWord,
     LoadAddress,
+    LoadImmediate,
     Jump,
     JumpAndLink,
     Call,

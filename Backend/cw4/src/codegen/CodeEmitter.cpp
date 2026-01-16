@@ -242,6 +242,9 @@ void emit_mnemonic(ostream &out, Mnemonic mnemonic) {
     case Mnemonic::LoadAddress:
         out << "la";
         break;
+    case Mnemonic::LoadImmediate:
+        out << "li";
+        break;
     case Mnemonic::Jump:
         out << "j";
         break;
@@ -361,6 +364,16 @@ void emit_load_address(ostream &out, Register dest, string label) {
     emit_register(out, dest);
     out << ", ";
     out << label;
+    out << endl;
+}
+
+void emit_load_immediate(ostream &out, Register dest, int imm) {
+    emit_ident(out);
+    emit_mnemonic(out, Mnemonic::LoadImmediate);
+    out << " ";
+    emit_register(out, dest);
+    out << ", ";
+    out << imm;
     out << endl;
 }
 

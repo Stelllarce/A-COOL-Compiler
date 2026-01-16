@@ -97,6 +97,8 @@ void emit_load_word(std::ostream &out, Register dest, MemoryLocation src);
 // Example gen: [    la t0, _string1.content\n]
 void emit_load_address(std::ostream &out, Register dest, std::string label);
 
+void emit_load_immediate(std::ostream &out, Register dest, int imm);
+
 void emit_jump(std::ostream &out, std::string label);
 
 // Emits a "jump and link" instruction that transfers control to the code at
